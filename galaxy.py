@@ -15,13 +15,13 @@ import json
 def log(func):
 
     def wrapper(*args, **kw):
-        print('========================================================================')
+        print('--------------------------------------------------------------------------')
         begin_time = time.clock()
         print('@Running the function %s() at %s' % (func.__name__, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())))
         func(*args, **kw)
         end_time = time.clock()
         print('@The function takes %f seconds to complete' % (end_time-begin_time))
-        print('========================================================================')
+        print('--------------------------------------------------------------------------')
         return
 
     return wrapper
@@ -121,12 +121,10 @@ class Galaxy(object):
 
     @log
     def __get_background__(self):
-        _SExtractorProcess = subprocess.Popen('sextractor ' + self.__skyFile,
+        _SExtractorProcess = subprocess.Popen('sextractor %s' % self.__skyFile,
                                               shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         _SExtractorProcess.wait()
         self.__SExtractorOutput = _SExtractorProcess.stdout.readlines()
-        # for i in range(len(self.__SExtractorOutput)):
-        #     print('%d    %s' % (i, self.__SExtractorOutput[i]))
         _backgroundIndex = self.__SExtractorOutput.index(b'\x1b[1M> Scanning image\n')-1
         _backgroundInformation = self.__SExtractorOutput[_backgroundIndex].split()
         self.__background = {
@@ -139,7 +137,7 @@ class Galaxy(object):
 
     # visualizing methods
     def show_initial_image(self):
-        subprocess.Popen('ds9 -scale mode zscale -zoom 0.25 '+self.__file, shell=True, executable='/usr/bin/zsh')
+        subprocess.Popen('ds9 -scale mode zscale -zoom 0.25 %s' % self.__skyFile, shell=True, executable='/usr/bin/zsh')
         return
 
     def show_eta_curve(self):
@@ -149,30 +147,29 @@ class Galaxy(object):
         plt.show()
         return
 
-    def show_truncate_image(self):
+    def show_truncate_image(self, path, name):
         if op.exists(self.__truncateFile):
             subprocess.call('rm '+self.__truncateFile, shell=True, executable='/usr/bin/zsh')
         if not self.__flag['get_gd']:
             self.__truncate__()
         ft.writeto(self.__truncateFile, self.__galaxyData)
-        subprocess.Popen('ds9 -scale mode zscale -zoom 2 '+self.__truncateFile, shell=True, executable='/usr/bin/zsh')
+        subprocess.call('mv %s %s' % (self.__truncateFile, path+name), shell=True, executable='/usr/bin/zsh')
+        subprocess.Popen('ds9 -scale mode zscale -zoom 2 %s' % path+name, shell=True, executable='/usr/bin/zsh')
         return
 
 
 def test():
     warnings.filterwarnings('ignore')
-    data = pd.read_csv('list.csv')
-    a = data.iterrows()
-    cnt = 0
-    for j in a:
-        cnt += 1
-        if cnt > 19:
-            break
-        i = j[1]
-        print(i.NAME2)
-        centroid = [i.RA2, i.DEC2]
-        gl = Galaxy('/home/franky/Desktop/type2cut/'+i.NAME2+'_r.fits', centroid)
-        print(gl.background)
+    catalog = pd.read_csv('list.csv')
+    fits_directory = '/home/franky/Desktop/type2cut/'
+    tmp_path = '/home/franky/Desktop/tmp/'
+    # for i in range(len(catalog)):
+    for i in range(1):
+        ctl = catalog.ix[i]
+        name = ctl.NAME2+'_r.fits'
+        ct = [ctl.RA2, ctl.DEC2]
+        gl = Galaxy(fits_directory+name, ct)
+        gl.show_truncate_image(tmp_path, name)
         # gl.__get_background__()
     # with open('list.csv') as file:
     #     for line in file:
