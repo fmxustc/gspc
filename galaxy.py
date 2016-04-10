@@ -55,7 +55,11 @@ class Galaxy(object):
         self.__flag = {
             'get_pr': False,
             'get_gd': False,
-            'get_bg': False
+            'get_bg': False,
+            'cal_a': False,
+            'cal_g': False,
+            'cal_m': False,
+            'cal_c': False,
         }
         # others
         self.__SExtractorOutput = ''
@@ -81,6 +85,16 @@ class Galaxy(object):
         if not self.__flag['get_bg']:
             self.__get_background__()
         return json.dumps(self.__background, indent=4)
+
+    @property
+    def asymmetry_parameter(self):
+        if not self.__flag['get_pr']:
+            self.__truncate__()
+        ct = self.__pixCentroid
+        ptr = self.__petrosianRadius
+        _I = np.copy(self.__skyData[ct[0]-ptr*1.5:ct[0]+ptr*1.5+1, ct[1]-ptr*1.5:ct[1]+ptr*1.5+1])
+        _I180 = np.rot90(_I, 2)
+        return np.sum(abs(_I-_I180))/(2*np.sum(abs(_I)))
 
     # core functions
     @log
