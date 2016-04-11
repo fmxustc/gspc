@@ -39,10 +39,10 @@ class Galaxy(object):
         }
         # array data
         self.__data = {
-            'sky': None,
-            'galaxy_1pr': None,
-            'galaxy_1.5pr': None,
-            'galaxy_2pr': None
+            'sky': np.array([]),
+            'galaxy_1pr': np.array([]),
+            'galaxy_1.5pr': np.array([]),
+            'galaxy_2pr': np.array([])
         }
         # galaxy's attributes
         self.__centroid = {
@@ -104,8 +104,7 @@ class Galaxy(object):
     def asymmetry_parameter(self):
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
-        ptr = self.__petrosianRadius
-        _I = np.copy(self.__data['galaxy_1.5pr'].flatten()).reshape((3*ptr+1, 3*ptr+1))
+        _I = np.copy(self.__data['galaxy_1.5pr'])
         _I180 = np.rot90(_I, 2)
         return np.sum(abs(_I-_I180))/(2*np.sum(abs(_I)))
 
@@ -133,24 +132,18 @@ class Galaxy(object):
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
         ptr = self.__petrosianRadius
-        _M = np.copy(self.__data['galaxy_1pr'].flatten()).reshape((2*ptr+1, 2*ptr+1))
-        for y in range(_M.shape[0]):
-            for x in range(_M.shape[1]):
-                _M[y][x] *= (y-ptr)**2+(x-ptr)**2
-        _M = _M.flatten()
         _F = np.sort(self.__data['galaxy_1pr'].flatten())[::-1]
         arg = np.argsort(self.__data['galaxy_1pr'].flatten())[::-1]
-        total = _F.sum()
-        moment = 0
-        flux = 0
-        for i in range(len(_F)):
-            if flux / total > 0.2:
-                return np.log10(10 * moment / _M.sum())
-            flux += _F[i]
-            moment += _M[arg[i]]
+        dist = [((arg[t] // (2*ptr+1))-ptr)**2+((arg[t] % (2*ptr+1))-ptr)**2 for t in range(len(_F))]
+        _M = _F*np.array(dist)
+        for i in range(len(_F) - 1):
+            _F[i + 1] += _F[i]
+        bound = float(np.argwhere(_F > 0.2 * np.sum(self.__data['galaxy_1pr']))[0])
+        print(bound, _F[bound].sum(), _F[-1])
+        return np.log10(_M[:bound].sum()/_M.sum())
 
     # core functions
-    @log
+    # @log
     def __get_petrosian_radius__(self):
         if self.__flag['get_pr']:
             return
@@ -158,13 +151,10 @@ class Galaxy(object):
         _leftDistance = np.array(self.__centroid['pix'])
         _boxSize = np.min([_rightDistance, _leftDistance, [250, 250]])
         self.__surfaceBrightness = np.zeros(_boxSize)
-        for y in np.arange(round(self.__centroid['pix'][0]-_boxSize+1), self.__centroid['pix'][0]+_boxSize):
-            for x in np.arange(round(self.__centroid['pix'][1]-_boxSize+1), self.__centroid['pix'][1]+_boxSize):
-                # TODO: some times dist may be out of bounds for the array surfaceBrightness
+        for y in np.arange(self.__centroid['pix'][0]-_boxSize+1, self.__centroid['pix'][0]+_boxSize):
+            for x in np.arange(self.__centroid['pix'][1]-_boxSize+1, self.__centroid['pix'][1]+_boxSize):
                 dist = max(abs(y-self.__centroid['pix'][0]), abs(x-self.__centroid['pix'][1]))
-                if dist > len(self.__surfaceBrightness):
-                    raise IndexError('(%f,%f)\'s distance is out of bounds for the array surfaceBrightness' % (y, x))
-                self.__surfaceBrightness[dist] += self.__data['sky'][y][x]
+                self.__surfaceBrightness[min(dist, _boxSize-1)] += self.__data['sky'][y][x]
         self.__meanSurfaceBrightness = np.copy(self.__surfaceBrightness)
         for r in np.arange(_boxSize):
             if r == 0:
@@ -176,11 +166,11 @@ class Galaxy(object):
                 self.__meanSurfaceBrightness[r] /= (2*(r+1)-1)**2
         eta = self.__surfaceBrightness/self.__meanSurfaceBrightness
         self.__petrosianRadius = float(np.argwhere(eta < 0.2)[0])
-        print('Petrosian Radius = %f' % self.__petrosianRadius)
+        # print('Petrosian Radius = %f' % self.__petrosianRadius)
         self.__flag['get_pr'] = True
         return
 
-    @log
+    # @log
     def __get_galaxy_data__(self):
         if not self.__flag['get_pr']:
             self.__get_petrosian_radius__()
@@ -191,7 +181,7 @@ class Galaxy(object):
         self.__flag['get_gd'] = True
         return
 
-    @log
+    # @log
     def __get_background__(self):
         _SExtractorProcess = subprocess.Popen('sextractor %s' % self.__file['sky'],
                                               shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -230,22 +220,38 @@ class Galaxy(object):
         return
 
 
+# @log
 def test():
     warnings.filterwarnings('ignore')
     catalog = pd.read_csv('list.csv')
     fits_directory = '/home/franky/Desktop/type1cut/'
     # tmp_path = '/home/franky/Desktop/tmp/'
     # for i in range(len(catalog)):
+    w = []
     for i in range(1):
         ctl = catalog.ix[i]
         name = ctl.NAME1+'_r.fits'
         ct = [ctl.RA1, ctl.DEC1]
         gl = Galaxy(fits_directory+name, ct)
-        print(gl.moment_parameter)
+        w.append(gl.moment_parameter)
+    print(w)
     # with open('list.csv') as file:
     #     for line in file:
     #         print(line)
 
 
+# @log
+def load():
+    data = pd.read_table('COSMOS-mor-H.txt', sep=' ', index_col=0, usecols=['NUMBER', 'X_IMAGE', 'Y_IMAGE', 'Gini', 'M20'])
+    fits = '/home/franky/Desktop/check/hlsp_candels_hst_wfc3_cos-tot_f160w_v1.0_drz.fits'
+    print(data.iat[10, 0])
+    tmp_path = '/home/franky/Desktop/tmp/'
+    for i in range(1, 20):
+        pix_ctrd = [data.iat[i, 1], data.iat[i, 0]]
+        gl = Galaxy(fits, pix_ctrd, centroid_mode='pix')
+        gl.show_galaxy_image(tmp_path,  str(i))
+
+
 if __name__ == '__main__':
-    test()
+    # test()
+    load()
