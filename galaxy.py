@@ -44,7 +44,6 @@ class Galaxy(object):
             'galaxy_1pr': np.array([]),
             'galaxy_1.5pr': np.array([]),
             'galaxy_2pr': np.array([]),
-            'galaxy_2.5pr': np.array([]),
             'truncate': np.array([])
         }
         # galaxy's attributes
@@ -225,7 +224,6 @@ class Galaxy(object):
         self.__data['galaxy_1pr'] = np.copy(self.__data['sky'][ct[0]-ptr:ct[0]+ptr+1, ct[1]-ptr:ct[1]+ptr+1])
         self.__data['galaxy_1.5pr'] = np.copy(self.__data['sky'][ct[0]-ptr*1.5:ct[0]+ptr*1.5+1, ct[1]-ptr*1.5:ct[1]+ptr*1.5+1])
         self.__data['galaxy_2pr'] = np.copy(self.__data['sky'][ct[0]-ptr*2:ct[0]+ptr*2+1, ct[1]-ptr*2:ct[1]+ptr*2+1])
-        self.__data['galaxy_2.5pr'] = np.copy(self.__data['sky'][ct[0]-ptr*2.5:ct[0]+ptr*2.5+1, ct[1]-ptr*2.5:ct[1]+ptr*2.5+1])
         self.__flag['get_gd'] = True
         return
 
@@ -249,7 +247,7 @@ class Galaxy(object):
 
     # visualizing methods
     def show_initial_image(self):
-        subprocess.Popen('ds9 -scale mode zscale -zoom 0.25 %s' % self.__file['sky'], shell=True, executable='/usr/bin/zsh')
+        subprocess.Popen('~/bin/ds9 -scale mode zscale -zoom 0.25 %s' % self.__file['sky'], shell=True, executable='/bin/zsh')
         return
 
     def show_eta_curve(self):
@@ -261,12 +259,12 @@ class Galaxy(object):
 
     def show_galaxy_image(self, path='../tmp/', name='galaxy_1pr.fits'):
         if op.exists(self.__file['galaxy']):
-            subprocess.call('rm '+self.__file['galaxy'], shell=True, executable='/usr/bin/zsh')
+            subprocess.call('rm '+self.__file['galaxy'], shell=True, executable='/bin/zsh')
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
         ft.writeto(self.__file['galaxy'], self.__data['galaxy_1pr'])
-        subprocess.call('mv %s %s' % (self.__file['galaxy'], path+name), shell=True, executable='/usr/bin/zsh')
-        subprocess.Popen('ds9 -scale mode zscale -zoom 2 %s' % path+name, shell=True, executable='/usr/bin/zsh')
+        subprocess.call('mv %s %s' % (self.__file['galaxy'], path+name), shell=True, executable='/bin/zsh')
+        subprocess.Popen('~/bin/ds9 -scale mode zscale -zoom 2 %s' % path+name, shell=True, executable='/bin/zsh')
         return
 
     def show_truncate_image(self, crd, radius, crd_mode='pix', path='../tmp/', name='truncate.fits'):
@@ -283,10 +281,10 @@ class Galaxy(object):
         self.__data['truncate'] = self.__data['sky'][coordinate['pix'][0]-radius+1: coordinate['pix'][0]+radius,
                                                      coordinate['pix'][1] - radius + 1: coordinate['pix'][1] + radius]
         if op.exists(self.__file['truncate']):
-            subprocess.call('rm ' + self.__file['truncate'], shell=True, executable='/usr/bin/zsh')
+            subprocess.call('rm ' + self.__file['truncate'], shell=True, executable='/bin/zsh')
         ft.writeto(self.__file['truncate'], self.__data['truncate'])
-        subprocess.call('mv %s %s' % (self.__file['truncate'], path + name), shell=True, executable='/usr/bin/zsh')
-        subprocess.Popen('ds9 -scale mode zscale -zoom 2 %s' % path + name, shell=True, executable='/usr/bin/zsh')
+        subprocess.call('mv %s %s' % (self.__file['truncate'], path + name), shell=True, executable='/bin/zsh')
+        subprocess.Popen('~/bin/ds9 -scale mode zscale -zoom 2 %s' % path + name, shell=True, executable='/bin/zsh')
         return
 
 
@@ -294,7 +292,7 @@ class Galaxy(object):
 def test():
     warnings.filterwarnings('ignore')
     catalog = pd.read_csv('list.csv')
-    fits_directory = '/home/franky/Desktop/type1cut/'
+    fits_directory = '/Users/franky/Desktop/type1cut/'
     w = []
     for i in range(1):
         ctl = catalog.ix[i]
@@ -308,14 +306,14 @@ def test():
 @log
 def load():
     data = pd.read_table('COSMOS-mor-H.txt', sep=' ', index_col=0)
-    fits = '/home/franky/Desktop/check/sky.fits'
+    fits = '/Users/franky/Desktop/check/sky.fits'
     gls = data[(data.HalfLightRadiusInPixels > 25) &
                (data.HalfLightRadiusInPixels < 30)]
     gls.index = range(len(gls))
     for i in [0, 1, 2]:
         sample = gls.ix[i]
         gl = Galaxy(fits, [sample.Y_IMAGE, sample.X_IMAGE], centroid_mode='pix')
-        print(gl.half_light_radius_in_pixels)
+        gl.show_galaxy_image()
 
 
 if __name__ == '__main__':
