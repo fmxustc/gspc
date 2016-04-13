@@ -29,7 +29,8 @@ def log(func):
 
 class Galaxy(object):
 
-    def __init__(self, fl, centroid, centroid_mode='world'):
+    def __init__(self, fl, centroid, centroid_mode='world',
+                 shell='/usr/bin/zsh', ds9='ds9', sextractor='sextractor'):
         """initialize"""
         # intermediate files
         self.__file = {
@@ -44,6 +45,7 @@ class Galaxy(object):
             'galaxy_1pr': np.array([]),
             'galaxy_1.5pr': np.array([]),
             'galaxy_2pr': np.array([]),
+            'galaxy_2.5pr': np.array([]),
             'truncate': np.array([])
         }
         # galaxy's attributes
@@ -52,7 +54,8 @@ class Galaxy(object):
             'world': []
         }
         self.__petrosianRadius = None
-        self.__surfaceBrightness = None
+        # self.__quasiPetrosianIsophote = None
+        self.__surfaceBrightness = np.array([])
         self.__meanSurfaceBrightness = None
         self.__background = None
         self.__circleApertureFlux = None
@@ -76,6 +79,12 @@ class Galaxy(object):
         }
         # SExtractor output string
         self.__SExtractorOutput = ''
+        # system software settings
+        self.__sys = {
+            'shell': shell,
+            'ds9': ds9,
+            'sex': sextractor
+        }
         # open the file and convert world coordinate to pix coordinate(if necessary)
         with ft.open(self.__file['sky']) as hdu:
             self.__hdu = hdu[0]
@@ -119,10 +128,10 @@ class Galaxy(object):
             return self.__structural_parameters['gini']
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
-        _F = np.sort(self.__data['galaxy_1.5pr'].flatten())
-        n = len(_F)
-        diff = np.array([2*l-n-1 for l in range(n)])
-        self.__structural_parameters['gini'] = np.sum(diff*_F)/(_F.mean()*n*(n-1))
+        n = self.__data['galaxy_1pr'].size
+        _F = np.sort(self.__data['galaxy_1pr'].flatten())
+        diff = np.array([2*(l+1)-n-1 for l in range(n)])
+        self.__structural_parameters['gini'] = np.sum(abs(diff*_F))/(_F.mean()*n*(n-1))
         self.__flag['cal_g'] = True
         return self.__structural_parameters['gini']
 
@@ -132,15 +141,18 @@ class Galaxy(object):
             return self.__structural_parameters['moment']
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
-        ptr = self.__petrosianRadius
-        _F = np.sort(self.__data['galaxy_1pr'].flatten())[::-1]
-        arg = np.argsort(self.__data['galaxy_1pr'].flatten())[::-1]
+        ptr = self.__petrosianRadius*1.5
+        _F = np.sort(self.__data['galaxy_1.5pr'].flatten())[::-1]
+        arg = np.argsort(self.__data['galaxy_1.5pr'].flatten())[::-1]
         dist = [((arg[t] // (2*ptr+1))-ptr)**2+((arg[t] % (2*ptr+1))-ptr)**2 for t in range(len(_F))]
         _M = _F*np.array(dist)
+        print(_F[:10])
+        print(dist[:10])
+        print(_M[:10])
         for i in range(len(_F) - 1):
             _F[i + 1] += _F[i]
-        bound = float(np.argwhere(_F > 0.2 * np.sum(self.__data['galaxy_1pr']))[0])
-        self.__structural_parameters['moment'] = _M[:bound].sum()/_M.sum()
+        bound = float(np.argwhere(_F > 0.2 * np.sum(self.__data['galaxy_1pr']))[0])+1
+        self.__structural_parameters['moment'] = np.sum(_M[:bound])/_M.sum()
         self.__flag['cal_m'] = True
         return self.__structural_parameters['moment']
 
@@ -160,11 +172,17 @@ class Galaxy(object):
             return self.__structural_parameters['concentration']
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
+        # if not self.__flag['get_bg']:
+        #     self.__get_background__()
         n = len(self.__meanSurfaceBrightness)
         self.__circleApertureFlux = np.array([(2*(r+1)-1)**2 for r in range(n)])*self.__meanSurfaceBrightness
-        r20 = float(np.argwhere(self.__circleApertureFlux > 0.2*self.__data['galaxy_1.5pr'].sum())[0])
-        r80 = float(np.argwhere(self.__circleApertureFlux > 0.8*self.__data['galaxy_1.5pr'].sum())[0])
-        self.__structural_parameters['concentration'] = np.log10(r80/r20)
+        r = min(n-1, float(np.argwhere(self.__surfaceBrightness < 2*0.00432403)[0]))
+        self.__structural_parameters['concentration'] = self.__circleApertureFlux[0.3*r]/self.__circleApertureFlux[r]
+        # r50 = float(np.argwhere(self.__circleApertureFlux > 0.5*self.__data['galaxy_1pr'].sum())[0])
+        # self.__structural_parameters['concentration'] = self.__circleApertureFlux[0.3*r50]/self.__circleApertureFlux[r50]
+        # r20 = float(np.argwhere(self.__circleApertureFlux > 0.2*self.__data['galaxy_1.5pr'].sum())[0])
+        # r80 = float(np.argwhere(self.__circleApertureFlux > 0.8*self.__data['galaxy_1.5pr'].sum())[0])
+        # self.__structural_parameters['concentration'] = np.log10(r80/r20)
         self.__flag['cal_c'] = True
         return self.__structural_parameters['concentration']
 
@@ -187,13 +205,13 @@ class Galaxy(object):
         return float(np.argwhere(f > np.sum(self.__data['galaxy_1pr'])*0.5)[0])
 
     # core functions
-    @log
+    # @log
     def __get_petrosian_radius__(self):
         if self.__flag['get_pr']:
             return
         _rightDistance = np.array(self.__data['sky'].shape)-np.array(self.__centroid['pix'])
         _leftDistance = np.array(self.__centroid['pix'])
-        _boxSize = np.min([_rightDistance, _leftDistance, [250, 250]])
+        _boxSize = np.min([_rightDistance, _leftDistance, [300, 300]])
         self.__surfaceBrightness = np.zeros(_boxSize)
         for y in np.arange(self.__centroid['pix'][0]-_boxSize+1, self.__centroid['pix'][0]+_boxSize):
             for x in np.arange(self.__centroid['pix'][1]-_boxSize+1, self.__centroid['pix'][1]+_boxSize):
@@ -213,7 +231,7 @@ class Galaxy(object):
         self.__flag['get_pr'] = True
         return
 
-    @log
+    # @log
     def __get_galaxy_data__(self):
         if self.__flag['get_gd']:
             return
@@ -224,15 +242,17 @@ class Galaxy(object):
         self.__data['galaxy_1pr'] = np.copy(self.__data['sky'][ct[0]-ptr:ct[0]+ptr+1, ct[1]-ptr:ct[1]+ptr+1])
         self.__data['galaxy_1.5pr'] = np.copy(self.__data['sky'][ct[0]-ptr*1.5:ct[0]+ptr*1.5+1, ct[1]-ptr*1.5:ct[1]+ptr*1.5+1])
         self.__data['galaxy_2pr'] = np.copy(self.__data['sky'][ct[0]-ptr*2:ct[0]+ptr*2+1, ct[1]-ptr*2:ct[1]+ptr*2+1])
+        self.__data['galaxy_2.5pr'] = np.copy(self.__data['sky'][ct[0]-ptr*2.5:ct[0]+ptr*2.5+1, ct[1]-ptr*2.5:ct[1]+ptr*2.5+1])
         self.__flag['get_gd'] = True
         return
 
-    @log
+    # @log
     def __get_background__(self):
         if self.__flag['get_bg']:
             return
-        _SExtractorProcess = subprocess.Popen('sextractor %s' % self.__file['sky'],
-                                              shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        _SExtractorProcess = subprocess.Popen('%s %s' % (self.__sys['sex'], self.__file['sky']),
+                                              shell=True, executable=self.__sys['shell'],
+                                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         _SExtractorProcess.wait()
         self.__SExtractorOutput = _SExtractorProcess.stdout.readlines()
         _backgroundIndex = self.__SExtractorOutput.index(b'\x1b[1M> Scanning image\n')-1
@@ -247,7 +267,8 @@ class Galaxy(object):
 
     # visualizing methods
     def show_initial_image(self):
-        subprocess.Popen('~/bin/ds9 -scale mode zscale -zoom 0.25 %s' % self.__file['sky'], shell=True, executable='/bin/zsh')
+        subprocess.Popen('%s -scale mode zscale -zoom 0.25 %s' % (self.__sys['ds9'], self.__file['sky']),
+                         shell=True, executable=self.__sys['shell'])
         return
 
     def show_eta_curve(self):
@@ -259,12 +280,12 @@ class Galaxy(object):
 
     def show_galaxy_image(self, path='../tmp/', name='galaxy_1pr.fits'):
         if op.exists(self.__file['galaxy']):
-            subprocess.call('rm '+self.__file['galaxy'], shell=True, executable='/bin/zsh')
+            subprocess.call('rm %s' % self.__file['galaxy'], shell=True, executable=self.__sys['shell'])
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
         ft.writeto(self.__file['galaxy'], self.__data['galaxy_1pr'])
-        subprocess.call('mv %s %s' % (self.__file['galaxy'], path+name), shell=True, executable='/bin/zsh')
-        subprocess.Popen('~/bin/ds9 -scale mode zscale -zoom 2 %s' % path+name, shell=True, executable='/bin/zsh')
+        subprocess.call('mv %s %s' % (self.__file['galaxy'], path+name), shell=True, executable=self.__sys['shell'])
+        subprocess.Popen('%s -scale mode zscale -zoom 2 %s' % (self.__sys['ds9'], path + name), shell=True, executable=self.__sys['shell'])
         return
 
     def show_truncate_image(self, crd, radius, crd_mode='pix', path='../tmp/', name='truncate.fits'):
@@ -281,40 +302,51 @@ class Galaxy(object):
         self.__data['truncate'] = self.__data['sky'][coordinate['pix'][0]-radius+1: coordinate['pix'][0]+radius,
                                                      coordinate['pix'][1] - radius + 1: coordinate['pix'][1] + radius]
         if op.exists(self.__file['truncate']):
-            subprocess.call('rm ' + self.__file['truncate'], shell=True, executable='/bin/zsh')
+            subprocess.call('rm ' + self.__file['truncate'], shell=True, executable=self.__sys['shell'])
         ft.writeto(self.__file['truncate'], self.__data['truncate'])
-        subprocess.call('mv %s %s' % (self.__file['truncate'], path + name), shell=True, executable='/bin/zsh')
-        subprocess.Popen('~/bin/ds9 -scale mode zscale -zoom 2 %s' % path + name, shell=True, executable='/bin/zsh')
+        subprocess.call('mv %s %s' % (self.__file['truncate'], path + name), shell=True, executable=self.__sys['shell'])
+        subprocess.Popen('%s -scale mode zscale -zoom 2 %s' % (self.__sys['ds9'], path + name), shell=True, executable=self.__sys['shell'])
         return
 
 
-@log
+# @log
 def test():
     warnings.filterwarnings('ignore')
     catalog = pd.read_csv('list.csv')
-    fits_directory = '/Users/franky/Desktop/type1cut/'
-    w = []
+    fits_directory = '/home/franky/Desktop/type1cut/'
+    shell = '/usr/bin/zsh'
+    ds9 = 'ds9'
+    sex = 'sextractor'
     for i in range(1):
         ctl = catalog.ix[i]
         name = ctl.NAME1+'_r.fits'
         ct = [ctl.RA1, ctl.DEC1]
-        gl = Galaxy(fits_directory+name, ct)
-        w.append(gl.moment_parameter)
-    print(w)
+        gl = Galaxy(fits_directory+name, ct, shell=shell, ds9=ds9, sextractor=sex)
+        print(gl.background)
 
 
-@log
+# @log
 def load():
-    data = pd.read_table('COSMOS-mor-H.txt', sep=' ', index_col=0)
-    fits = '/Users/franky/Desktop/check/sky.fits'
-    gls = data[(data.HalfLightRadiusInPixels > 25) &
-               (data.HalfLightRadiusInPixels < 30)]
+    data = pd.read_table('/home/franky/Desktop/check/COSMOS-mor-H.txt', sep=' ', index_col=0)
+    fits = '/home/franky/Desktop/check/sky.fits'
+    shell = '/usr/bin/zsh'
+    ds9 = 'ds9'
+    sex = 'sextractor'
+    gls = data[(data.HalfLightRadiusInPixels > 20) &
+               (data.HalfLightRadiusInPixels < 25)]
     gls.index = range(len(gls))
-    for i in [0, 1, 2]:
+    lst = [5,  6,  7,  9, 11, 12, 13, 15, 16, 17, 21, 25, 28, 29, 31, 32, 33,
+           34, 37, 42, 43, 45, 46, 47]
+    cnt = 0
+    for i in lst[:1]:
         sample = gls.ix[i]
-        gl = Galaxy(fits, [sample.Y_IMAGE, sample.X_IMAGE], centroid_mode='pix')
-        gl.show_galaxy_image()
-
+        gl = Galaxy(fits, [sample.Y_IMAGE, sample.X_IMAGE], centroid_mode='pix', shell=shell, ds9=ds9, sextractor=sex)
+        gl.show_galaxy_image(name=str(i))
+        ratio = abs(gl.moment_parameter-sample.M20)/sample.M20
+        # print(i, ratio)
+        # if ratio < 0.15:
+        #     cnt += 1
+    print(cnt)
 
 if __name__ == '__main__':
     # test()
