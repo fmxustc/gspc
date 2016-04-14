@@ -131,7 +131,7 @@ class Galaxy(object):
         n = self.__data['galaxy_1pr'].size
         _F = np.sort(self.__data['galaxy_1pr'].flatten())
         diff = np.array([2*(l+1)-n-1 for l in range(n)])
-        self.__structural_parameters['gini'] = np.sum(abs(diff*_F))/(_F.mean()*n*(n-1))
+        self.__structural_parameters['gini'] = np.sum(diff*abs(_F))/(abs(_F.mean())*n*(n-1))
         self.__flag['cal_g'] = True
         return self.__structural_parameters['gini']
 
@@ -141,14 +141,11 @@ class Galaxy(object):
             return self.__structural_parameters['moment']
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
-        ptr = self.__petrosianRadius*1.5
-        _F = np.sort(self.__data['galaxy_1.5pr'].flatten())[::-1]
-        arg = np.argsort(self.__data['galaxy_1.5pr'].flatten())[::-1]
+        ptr = self.__petrosianRadius*1
+        _F = np.sort(self.__data['galaxy_1pr'].flatten())[::-1]
+        arg = np.argsort(self.__data['galaxy_1pr'].flatten())[::-1]
         dist = [((arg[t] // (2*ptr+1))-ptr)**2+((arg[t] % (2*ptr+1))-ptr)**2 for t in range(len(_F))]
         _M = _F*np.array(dist)
-        print(_F[:10])
-        print(dist[:10])
-        print(_M[:10])
         for i in range(len(_F) - 1):
             _F[i + 1] += _F[i]
         bound = float(np.argwhere(_F > 0.2 * np.sum(self.__data['galaxy_1pr']))[0])+1
@@ -162,9 +159,12 @@ class Galaxy(object):
             return self.__structural_parameters['asymmetry']
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
+        rms = 0.00432403
         _I = np.copy(self.__data['galaxy_1.5pr'])
         _I180 = np.rot90(_I, 2)
-        return np.sum(abs(_I - _I180)) / (2 * np.sum(abs(_I)))
+        self.__structural_parameters['asymmetry'] = np.sum(abs(_I-_I180))/np.sum(abs(_I))
+        self.__flag['cal_a'] = True
+        return self.__structural_parameters['asymmetry']
 
     @property
     def concentration_parameter(self):
@@ -176,7 +176,9 @@ class Galaxy(object):
         #     self.__get_background__()
         n = len(self.__meanSurfaceBrightness)
         self.__circleApertureFlux = np.array([(2*(r+1)-1)**2 for r in range(n)])*self.__meanSurfaceBrightness
-        r = min(n-1, float(np.argwhere(self.__surfaceBrightness < 2*0.00432403)[0]))
+        rms = 0.00432403
+        # rms = self.__background['rms']
+        r = min(n-1, self.__petrosianRadius*1.5, float(np.argwhere(self.__surfaceBrightness < 2*rms)[0]))
         self.__structural_parameters['concentration'] = self.__circleApertureFlux[0.3*r]/self.__circleApertureFlux[r]
         # r50 = float(np.argwhere(self.__circleApertureFlux > 0.5*self.__data['galaxy_1pr'].sum())[0])
         # self.__structural_parameters['concentration'] = self.__circleApertureFlux[0.3*r50]/self.__circleApertureFlux[r50]
@@ -278,14 +280,20 @@ class Galaxy(object):
         plt.show()
         return
 
-    def show_galaxy_image(self, path='../tmp/', name='galaxy_1pr.fits'):
+    def show_galaxy_image(self, path='../tmp/', name='galaxy_1pr.fits', rotated=False):
         if op.exists(self.__file['galaxy']):
             subprocess.call('rm %s' % self.__file['galaxy'], shell=True, executable=self.__sys['shell'])
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
-        ft.writeto(self.__file['galaxy'], self.__data['galaxy_1pr'])
-        subprocess.call('mv %s %s' % (self.__file['galaxy'], path+name), shell=True, executable=self.__sys['shell'])
-        subprocess.Popen('%s -scale mode zscale -zoom 2 %s' % (self.__sys['ds9'], path + name), shell=True, executable=self.__sys['shell'])
+        if rotated is True:
+            ft.writeto(self.__file['galaxy'], np.rot90(self.__data['galaxy_1pr'], 2))
+            subprocess.call('mv %s %s' % (self.__file['galaxy'], path + name), shell=True, executable=self.__sys['shell'])
+            subprocess.Popen('%s -scale mode zscale -zoom 4 %s' % (self.__sys['ds9'], path + 'rotated_' + name), shell=True,
+                             executable=self.__sys['shell'])
+        else:
+            ft.writeto(self.__file['galaxy'], self.__data['galaxy_1pr'])
+            subprocess.call('mv %s %s' % (self.__file['galaxy'], path+name), shell=True, executable=self.__sys['shell'])
+            subprocess.Popen('%s -scale mode zscale -zoom 4 %s' % (self.__sys['ds9'], path+name), shell=True, executable=self.__sys['shell'])
         return
 
     def show_truncate_image(self, crd, radius, crd_mode='pix', path='../tmp/', name='truncate.fits'):
@@ -312,11 +320,17 @@ class Galaxy(object):
 # @log
 def test():
     warnings.filterwarnings('ignore')
+    # Linux Ubuntu version
     catalog = pd.read_csv('list.csv')
     fits_directory = '/home/franky/Desktop/type1cut/'
     shell = '/usr/bin/zsh'
     ds9 = 'ds9'
     sex = 'sextractor'
+    # # Mac OS version
+    # fits_directory = '/Users/franky/Desktop/type1cut/'
+    # shell = 'bin/zsh'
+    # ds9 = '~/bin/ds9'
+    # sex = 'sex'
     for i in range(1):
         ctl = catalog.ix[i]
         name = ctl.NAME1+'_r.fits'
@@ -332,21 +346,31 @@ def load():
     shell = '/usr/bin/zsh'
     ds9 = 'ds9'
     sex = 'sextractor'
+    # # Mac OS version
+    # data = pd.read_table('/Users/franky/Desktop/check/COSMOS-mor-H.txt', sep=' ', index_col=0)
+    # fits = '/Users/franky/Desktop/check/sky.fits'
+    # shell = '/bin/zsh'
+    # ds9 = '~/bin/ds9'
+    # sex = 'sex'
     gls = data[(data.HalfLightRadiusInPixels > 20) &
                (data.HalfLightRadiusInPixels < 25)]
     gls.index = range(len(gls))
     lst = [5,  6,  7,  9, 11, 12, 13, 15, 16, 17, 21, 25, 28, 29, 31, 32, 33,
-           34, 37, 42, 43, 45, 46, 47]
-    cnt = 0
-    for i in lst[:1]:
+           34, 42, 43, 45, 46, 47]
+    x = []
+    y = []
+    for i in lst[:]:
         sample = gls.ix[i]
         gl = Galaxy(fits, [sample.Y_IMAGE, sample.X_IMAGE], centroid_mode='pix', shell=shell, ds9=ds9, sextractor=sex)
-        gl.show_galaxy_image(name=str(i))
-        ratio = abs(gl.moment_parameter-sample.M20)/sample.M20
-        # print(i, ratio)
-        # if ratio < 0.15:
-        #     cnt += 1
-    print(cnt)
+        # gl.show_galaxy_image()
+        ratio = abs(gl.gini_parameter-sample.Gini)/sample.Gini
+        x.append(gl.gini_parameter)
+        y.append(sample.Gini)
+        print(i, gl.gini_parameter, sample.Gini, ratio)
+    sns.tsplot(x, color='r', label='fmx')
+    sns.tsplot(y, color='b', label='fgw')
+    plt.show()
+
 
 if __name__ == '__main__':
     # test()
