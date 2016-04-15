@@ -37,7 +37,9 @@ class Galaxy(object):
             'sky': fl,
             'galaxy': 'galaxy.fits',
             'check': 'check.fits',
-            'truncate': 'truncate.fits'
+            'truncate': 'truncate.fits',
+            'segmentation': 'segmentation.fits',
+            'background': 'background.fits'
         }
         # array data
         self.__data = {
@@ -46,7 +48,10 @@ class Galaxy(object):
             'galaxy_1.5pr': np.array([]),
             'galaxy_2pr': np.array([]),
             'galaxy_2.5pr': np.array([]),
-            'truncate': np.array([])
+            'truncate': np.array([]),
+            'segmentation': np.array([]),
+            'background_1pr': np.array([]),
+            'background_1.5pr': np.array([])
         }
         # galaxy's attributes
         self.__centroid = {
@@ -72,6 +77,7 @@ class Galaxy(object):
             'get_gd': False,
             'get_bg': False,
             'get_sp': False,
+            'get_seg': False,
             'cal_a': False,
             'cal_g': False,
             'cal_m': False,
@@ -108,7 +114,7 @@ class Galaxy(object):
         return json.dumps({
             'pix': self.__centroid['pix'],
             'world': self.__centroid['world']
-        }, indent=4)
+        }, indent=4, sort_keys=True)
 
     @property
     def petrosian_radius(self):
@@ -120,7 +126,7 @@ class Galaxy(object):
     def background(self):
         if not self.__flag['get_bg']:
             self.__get_background__()
-        return json.dumps(self.__background, indent=4)
+        return json.dumps(self.__background, indent=4, sort_keys=True)
 
     @property
     def gini_parameter(self):
@@ -159,10 +165,13 @@ class Galaxy(object):
             return self.__structural_parameters['asymmetry']
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
-        rms = 0.00432403
-        _I = np.copy(self.__data['galaxy_1.5pr'])
-        _I180 = np.rot90(_I, 2)
-        self.__structural_parameters['asymmetry'] = np.sum(abs(_I-_I180))/np.sum(abs(_I))
+        if not self.__flag['get_bg']:
+            self.__get_background__()
+        _A = np.copy(self.__data['galaxy_1.5pr'])
+        _B = np.copy(self.__data['background_1.5pr'])
+        _A180 = np.rot90(_A, 2)
+        _B180 = np.rot90(_B, 2)
+        self.__structural_parameters['asymmetry'] = np.sum(abs(_A-_A180))/np.sum(abs(_A)) - np.sum(abs(_B-_B180))/np.sum(abs(_B))
         self.__flag['cal_a'] = True
         return self.__structural_parameters['asymmetry']
 
@@ -173,7 +182,7 @@ class Galaxy(object):
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
         # if not self.__flag['get_bg']:
-        #     self.__get_background__()
+        #     self.__get_background_information__()
         n = len(self.__meanSurfaceBrightness)
         self.__circleApertureFlux = np.array([(2*(r+1)-1)**2 for r in range(n)])*self.__meanSurfaceBrightness
         rms = 0.00432403
@@ -252,7 +261,8 @@ class Galaxy(object):
     def __get_background__(self):
         if self.__flag['get_bg']:
             return
-        _SExtractorProcess = subprocess.Popen('%s %s' % (self.__sys['sex'], self.__file['sky']),
+        conf = '-CHECKIMAGE_TYPE BACKGROUND -CHECKIMAGE_NAME background.fits'
+        _SExtractorProcess = subprocess.Popen('%s %s %s' % (self.__sys['sex'], self.__file['sky'], conf),
                                               shell=True, executable=self.__sys['shell'],
                                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         _SExtractorProcess.wait()
@@ -262,9 +272,33 @@ class Galaxy(object):
         self.__background = {
             'mean': float(_backgroundInformation[2]),
             'rms': float(_backgroundInformation[4]),
-            'threshold': float(_backgroundInformation[7])
+            'threshold': float(_backgroundInformation[7]),
         }
+        with ft.open(self.__file['background']) as bg:
+            if not self.__flag['get_pr']:
+                self.__get_petrosian_radius__()
+            ct = self.__centroid['pix']
+            ptr = self.__petrosianRadius
+            self.__data['background_1pr'] = np.copy(np.array(bg[0].data)[ct[0]-ptr:ct[0]+ptr+1, ct[1]-ptr:ct[1]+ptr+1])
+            self.__data['background_1.5pr'] = np.copy(np.array(bg[0].data)[ct[0]-ptr*1.5:ct[0]+ptr*1.5+1, ct[1]-ptr*1.5:ct[1]+ptr*1.5+1])
         self.__flag['get_bg'] = True
+        return
+
+    # @log
+    def __get_segmentation_data__(self):
+        if self.__flag[':get_seg']:
+            return
+        if op.exists(self.__file['galaxy']):
+            subprocess.call('rm %s' % self.__file['galaxy'], shell=True, executable=self.__sys['shell'])
+        if not self.__flag['get_gd']:
+            self.__get_galaxy_data__()
+        ft.writeto(self.__file['galaxy'], self.__data['galaxy_1pr'])
+        conf = '-CHECKIMAGE_TYPE SEGMENTATION -CHECKIMAGE_NAME segmentation.fits'
+        subprocess.call('%s %s %s' % (self.__sys['sex'], self.__file['galaxy'], conf),
+                        shell=True, executable=self.__sys['shell'])
+        with ft.open(self.__file['segmentation']) as seg:
+            self.__data['segmentation'] = np.copy(seg[0].data)
+        self.__flag['get_seg'] = True
         return
 
     # visualizing methods
@@ -286,6 +320,7 @@ class Galaxy(object):
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
         if rotated is True:
+
             ft.writeto(self.__file['galaxy'], np.rot90(self.__data['galaxy_1pr'], 2))
             subprocess.call('mv %s %s' % (self.__file['galaxy'], path + name), shell=True, executable=self.__sys['shell'])
             subprocess.Popen('%s -scale mode zscale -zoom 4 %s' % (self.__sys['ds9'], path + 'rotated_' + name), shell=True,
@@ -319,18 +354,22 @@ class Galaxy(object):
 
 # @log
 def test():
+
     warnings.filterwarnings('ignore')
-    # Linux Ubuntu version
     catalog = pd.read_csv('list.csv')
-    fits_directory = '/home/franky/Desktop/type1cut/'
-    shell = '/usr/bin/zsh'
-    ds9 = 'ds9'
-    sex = 'sextractor'
-    # # Mac OS version
-    # fits_directory = '/Users/franky/Desktop/type1cut/'
-    # shell = 'bin/zsh'
-    # ds9 = '~/bin/ds9'
-    # sex = 'sex'
+
+    # # Linux Ubuntu version
+    # fits_directory = '/home/franky/Desktop/type1cut/'
+    # shell = '/usr/bin/zsh'
+    # ds9 = 'ds9'
+    # sex = 'sextractor'
+
+    # Mac OS version
+    fits_directory = '/Users/franky/Desktop/type1cut/'
+    shell = '/bin/zsh'
+    ds9 = '~/bin/ds9'
+    sex = 'sex'
+
     for i in range(1):
         ctl = catalog.ix[i]
         name = ctl.NAME1+'_r.fits'
@@ -339,19 +378,24 @@ def test():
         print(gl.background)
 
 
+
 # @log
 def load():
-    data = pd.read_table('/home/franky/Desktop/check/COSMOS-mor-H.txt', sep=' ', index_col=0)
-    fits = '/home/franky/Desktop/check/sky.fits'
-    shell = '/usr/bin/zsh'
-    ds9 = 'ds9'
-    sex = 'sextractor'
-    # # Mac OS version
-    # data = pd.read_table('/Users/franky/Desktop/check/COSMOS-mor-H.txt', sep=' ', index_col=0)
-    # fits = '/Users/franky/Desktop/check/sky.fits'
-    # shell = '/bin/zsh'
-    # ds9 = '~/bin/ds9'
-    # sex = 'sex'
+
+    # # Linux Ubuntu version
+    # data = pd.read_table('/home/franky/Desktop/check/COSMOS-mor-H.txt', sep=' ', index_col=0)
+    # fits = '/home/franky/Desktop/check/sky.fits'
+    # shell = '/usr/bin/zsh'
+    # ds9 = 'ds9'
+    # sex = 'sextractor'
+
+    # Mac OS version
+    data = pd.read_table('/Users/franky/Desktop/check/COSMOS-mor-H.txt', sep=' ', index_col=0)
+    fits = '/Users/franky/Desktop/check/sky.fits'
+    shell = '/bin/zsh'
+    ds9 = '~/bin/ds9'
+    sex = 'sex'
+
     gls = data[(data.HalfLightRadiusInPixels > 20) &
                (data.HalfLightRadiusInPixels < 25)]
     gls.index = range(len(gls))
@@ -363,15 +407,15 @@ def load():
         sample = gls.ix[i]
         gl = Galaxy(fits, [sample.Y_IMAGE, sample.X_IMAGE], centroid_mode='pix', shell=shell, ds9=ds9, sextractor=sex)
         # gl.show_galaxy_image()
-        ratio = abs(gl.gini_parameter-sample.Gini)/sample.Gini
-        x.append(gl.gini_parameter)
-        y.append(sample.Gini)
-        print(i, gl.gini_parameter, sample.Gini, ratio)
-    sns.tsplot(x, color='r', label='fmx')
-    sns.tsplot(y, color='b', label='fgw')
+        ratio = abs(gl.moment_parameter-sample.M20)/sample.M20
+        x.append(gl.moment_parameter)
+        y.append(sample.M20)
+        print(i, gl.moment_parameter, sample.M20, ratio)
+    sns.tsplot(x, color='r')
+    sns.tsplot(y, color='b')
     plt.show()
 
 
 if __name__ == '__main__':
-    # test()
-    load()
+    test()
+    # load()
