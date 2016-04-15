@@ -355,7 +355,6 @@ class Galaxy(object):
 # @log
 def test():
 
-    #
     warnings.filterwarnings('ignore')
     catalog = pd.read_csv('list.csv')
 
