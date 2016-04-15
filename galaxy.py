@@ -134,9 +134,27 @@ class Galaxy(object):
             return self.__structural_parameters['gini']
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
-        n = self.__data['galaxy_1pr'].size
-        _F = np.sort(self.__data['galaxy_1pr'].flatten())
+        if not self.__flag['get_seg']:
+            self.__get_segmentation_data__()
+        # TODO 这里直接在函数里面获取星系的形状参数,后面测试完要封装起来
+        gls = pd.read_table('result.txt', header=None, sep='\s+', names=['m', 'x', 'y', 'cxx', 'cyy', 'cxy'])
+        ptr = self.__petrosianRadius
+        gls['dst'] = abs(gls.x-ptr)+abs(gls.y-ptr)
+        gls.sort(columns=['dst'])
+        gls.reindex(range(len(gls)))
+        gl = gls.ix[0]
+        # TODO 这里直接在函数里面探测属于galaxy的pixels,后面测试完要封装起来
+        _F = []
+        for y in np.arange(2*ptr+1):
+            for x in np.arange(2*ptr+1):
+                dist = gl.cxx*(x-gl.x)**2+gl.cyy*(y-gl.y)**2+gl.cxy*(x-gl.x)*(y-gl.y)-3.5**2
+                if self.__data['segmentation'][y][x] and dist <= 0:
+                    _F.append(self.__data['galaxy_1pr'][y][x])
+        n = len(_F)
+        _F = np.array(sorted(_F))
+        # n = self.__data['galaxy_1pr'].size
         diff = np.array([2*(l+1)-n-1 for l in range(n)])
+        # _F = np.sort(self.__data['galaxy_1pr'].flatten())
         self.__structural_parameters['gini'] = np.sum(diff*abs(_F))/(abs(_F.mean())*n*(n-1))
         self.__flag['cal_g'] = True
         return self.__structural_parameters['gini']
@@ -286,12 +304,13 @@ class Galaxy(object):
 
     # @log
     def __get_segmentation_data__(self):
-        if self.__flag[':get_seg']:
+        if self.__flag['get_seg']:
             return
         if op.exists(self.__file['galaxy']):
             subprocess.call('rm %s' % self.__file['galaxy'], shell=True, executable=self.__sys['shell'])
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
+        # TODO 这里直接在函数里面生成的galaxy图像,后面测试完要封装起来
         ft.writeto(self.__file['galaxy'], self.__data['galaxy_1pr'])
         conf = '-CHECKIMAGE_TYPE SEGMENTATION -CHECKIMAGE_NAME segmentation.fits'
         subprocess.call('%s %s %s' % (self.__sys['sex'], self.__file['galaxy'], conf),
@@ -375,8 +394,7 @@ def test():
         name = ctl.NAME1+'_r.fits'
         ct = [ctl.RA1, ctl.DEC1]
         gl = Galaxy(fits_directory+name, ct, shell=shell, ds9=ds9, sextractor=sex)
-        print(gl.background)
-
+        print(gl.gini_parameter)
 
 
 # @log
@@ -403,19 +421,19 @@ def load():
            34, 42, 43, 45, 46, 47]
     x = []
     y = []
-    for i in lst[:]:
+    for i in lst[:1]:
         sample = gls.ix[i]
         gl = Galaxy(fits, [sample.Y_IMAGE, sample.X_IMAGE], centroid_mode='pix', shell=shell, ds9=ds9, sextractor=sex)
         # gl.show_galaxy_image()
-        ratio = abs(gl.moment_parameter-sample.M20)/sample.M20
-        x.append(gl.moment_parameter)
-        y.append(sample.M20)
-        print(i, gl.moment_parameter, sample.M20, ratio)
+        ratio = abs(gl.gini_parameter-sample.Gini)/sample.Gini
+        x.append(gl.gini_parameter)
+        y.append(sample.Gini)
+        print(i, gl.gini_parameter, sample.Gini, ratio)
     sns.tsplot(x, color='r')
     sns.tsplot(y, color='b')
     plt.show()
 
 
 if __name__ == '__main__':
-    test()
-    # load()
+    # test()
+    load()
