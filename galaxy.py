@@ -29,14 +29,14 @@ def log(func):
 
 class Galaxy(object):
 
-    def __init__(self, fl, centroid, centroid_mode='world',
+    def __init__(self, sky, centroid, centroid_mode='world',
                  shell='/usr/bin/zsh', ds9='ds9', sextractor='sextractor'):
         """initialize"""
         # intermediate files
         self.__file = {
-            'sky': fl,
+            'sky': sky,
             'galaxy': 'galaxy.fits',
-            'check': 'check.fits',
+            'catalog': 'catalog.txt',
             'truncate': 'truncate.fits',
             'segmentation': 'segmentation.fits',
             'background': 'background.fits'
@@ -44,26 +44,40 @@ class Galaxy(object):
         # array data
         self.__data = {
             'sky': np.array([]),
-            'galaxy_1pr': np.array([]),
-            'galaxy_1.5pr': np.array([]),
-            'galaxy_2pr': np.array([]),
-            'galaxy_2.5pr': np.array([]),
+            'galaxy': {
+                '1pr': np.array([]),
+                '1.5pr': np.array([]),
+                '2pr': np.array([]),
+                '2.5pr': np.array([])
+            },
             'truncate': np.array([]),
-            'segmentation': np.array([]),
-            'background_1pr': np.array([]),
-            'background_1.5pr': np.array([])
+            'segmentation': {
+                '1pr': np.array([]),
+                '1.5pr': np.array([]),
+                '2pr': np.array([]),
+                '2.5pr': np.array([]),
+                'sky': np.array([])
+            },
+            'background': {
+                '1pr': np.array([]),
+                '1.5pr': np.array([]),
+                '2pr': np.array([]),
+                '2.5pr': np.array([]),
+                'sky': np.array([])
+            }
         }
         # galaxy's attributes
+        self.__galaxy = None
         self.__centroid = {
             'pix': [],
             'world': []
         }
-        self.__petrosianRadius = None
+        self.__petrosianRadius = 0
         # self.__quasiPetrosianIsophote = None
         self.__surfaceBrightness = np.array([])
-        self.__meanSurfaceBrightness = None
-        self.__background = None
-        self.__circleApertureFlux = None
+        self.__meanSurfaceBrightness = np.array([])
+        self.__background = {}
+        self.__circleApertureFlux = np.array([])
         # structural parameters
         self.__structural_parameters = {
             'gini': None,
@@ -78,6 +92,7 @@ class Galaxy(object):
             'get_bg': False,
             'get_sp': False,
             'get_seg': False,
+            'get_gl': False,
             'cal_a': False,
             'cal_g': False,
             'cal_m': False,
@@ -101,7 +116,7 @@ class Galaxy(object):
             self.__centroid['pix'] = list(wcs.WCS(self.__header).all_world2pix(np.array([centroid]), 1)[0])
         elif centroid_mode is 'pix':
             self.__centroid['pix'] = list(centroid)
-            self.__centroid['world'] = list(wcs.WCS(self.__header).wcs_pix2world(np.array([centroid]), 1))
+            self.__centroid['world'] = list(wcs.WCS(self.__header).wcs_pix2world(np.array([centroid]), 1)[0])
         return
 
     # properties
@@ -111,6 +126,7 @@ class Galaxy(object):
 
     @property
     def centroid_coordinate(self):
+        print(self.__centroid)
         return json.dumps({
             'pix': self.__centroid['pix'],
             'world': self.__centroid['world']
@@ -136,25 +152,29 @@ class Galaxy(object):
             self.__get_galaxy_data__()
         if not self.__flag['get_seg']:
             self.__get_segmentation_data__()
-        # TODO 这里直接在函数里面获取星系的形状参数,后面测试完要封装起来
-        gls = pd.read_table('result.txt', header=None, sep='\s+', names=['m', 'x', 'y', 'cxx', 'cyy', 'cxy'])
-        ptr = self.__petrosianRadius
-        gls['dst'] = abs(gls.x-ptr)+abs(gls.y-ptr)
-        gls.sort(columns=['dst'])
-        gls.reindex(range(len(gls)))
-        gl = gls.ix[0]
+        if not self.__flag['get_gl']:
+            self.__get_catalog__()
         # TODO 这里直接在函数里面探测属于galaxy的pixels,后面测试完要封装起来
         _F = []
+        gl = self.__galaxy
+        ptr = self.__petrosianRadius*2.5
+        print(gl, ptr/2.5, ptr)
         for y in np.arange(2*ptr+1):
             for x in np.arange(2*ptr+1):
-                dist = gl.cxx*(x-gl.x)**2+gl.cyy*(y-gl.y)**2+gl.cxy*(x-gl.x)*(y-gl.y)-3.5**2
-                if self.__data['segmentation'][y][x] and dist <= 0:
-                    _F.append(self.__data['galaxy_1pr'][y][x])
+                dist = gl.cxx*(x-ptr)**2+gl.cyy*(y-ptr)**2+gl.cxy*(x-ptr)*(y-ptr)-3.5**2
+                if self.__data['segmentation']['2.5pr'][y][x] and dist <= 0:
+                    _F.append(self.__data['galaxy']['2.5pr'][y][x])
+        # gl = self.__galaxy
+        # ptr = self.__petrosianRadius * 2.5
+        # print(gl.x, gl.y, ptr)
+        # for y in np.arange(gl.y - ptr, gl.y + ptr + 1):
+        #     for x in np.arange(gl.x - ptr, gl.x + ptr + 1):
+        #         dist = gl.cxx * (x - gl.x) ** 2 + gl.cyy * (y - gl.y) ** 2 + gl.cxy * (x - gl.x) * (y - gl.y) - 3.5 ** 2
+        #         if self.__data['segmentation']['2.5pr'][y][x] and dist <= 0:
+        #             _F.append(self.__data['sky'][y][x])
         n = len(_F)
         _F = np.array(sorted(_F))
-        # n = self.__data['galaxy_1pr'].size
         diff = np.array([2*(l+1)-n-1 for l in range(n)])
-        # _F = np.sort(self.__data['galaxy_1pr'].flatten())
         self.__structural_parameters['gini'] = np.sum(diff*abs(_F))/(abs(_F.mean())*n*(n-1))
         self.__flag['cal_g'] = True
         return self.__structural_parameters['gini']
@@ -166,13 +186,13 @@ class Galaxy(object):
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
         ptr = self.__petrosianRadius*1
-        _F = np.sort(self.__data['galaxy_1pr'].flatten())[::-1]
-        arg = np.argsort(self.__data['galaxy_1pr'].flatten())[::-1]
+        _F = np.sort(self.__data['galaxy']['1pr'].flatten())[::-1]
+        arg = np.argsort(self.__data['galaxy']['1pr'].flatten())[::-1]
         dist = [((arg[t] // (2*ptr+1))-ptr)**2+((arg[t] % (2*ptr+1))-ptr)**2 for t in range(len(_F))]
         _M = _F*np.array(dist)
         for i in range(len(_F) - 1):
             _F[i + 1] += _F[i]
-        bound = float(np.argwhere(_F > 0.2 * np.sum(self.__data['galaxy_1pr']))[0])+1
+        bound = float(np.argwhere(_F > 0.2 * np.sum(self.__data['galaxy']['1pr']))[0])+1
         self.__structural_parameters['moment'] = np.sum(_M[:bound])/_M.sum()
         self.__flag['cal_m'] = True
         return self.__structural_parameters['moment']
@@ -185,8 +205,8 @@ class Galaxy(object):
             self.__get_galaxy_data__()
         if not self.__flag['get_bg']:
             self.__get_background__()
-        _A = np.copy(self.__data['galaxy_1.5pr'])
-        _B = np.copy(self.__data['background_1.5pr'])
+        _A = np.copy(self.__data['galaxy']['1.5pr'])
+        _B = np.copy(self.__data['background']['1.5pr'])
         _A180 = np.rot90(_A, 2)
         _B180 = np.rot90(_B, 2)
         self.__structural_parameters['asymmetry'] = np.sum(abs(_A-_A180))/np.sum(abs(_A)) - np.sum(abs(_B-_B180))/np.sum(abs(_B))
@@ -200,17 +220,17 @@ class Galaxy(object):
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
         # if not self.__flag['get_bg']:
-        #     self.__get_background_information__()
+        #     self.__get_background__()
         n = len(self.__meanSurfaceBrightness)
         self.__circleApertureFlux = np.array([(2*(r+1)-1)**2 for r in range(n)])*self.__meanSurfaceBrightness
         rms = 0.00432403
         # rms = self.__background['rms']
         r = min(n-1, self.__petrosianRadius*1.5, float(np.argwhere(self.__surfaceBrightness < 2*rms)[0]))
         self.__structural_parameters['concentration'] = self.__circleApertureFlux[0.3*r]/self.__circleApertureFlux[r]
-        # r50 = float(np.argwhere(self.__circleApertureFlux > 0.5*self.__data['galaxy_1pr'].sum())[0])
+        # r50 = float(np.argwhere(self.__circleApertureFlux > 0.5*self.__data['galaxy']['1pr'].sum())[0])
         # self.__structural_parameters['concentration'] = self.__circleApertureFlux[0.3*r50]/self.__circleApertureFlux[r50]
-        # r20 = float(np.argwhere(self.__circleApertureFlux > 0.2*self.__data['galaxy_1.5pr'].sum())[0])
-        # r80 = float(np.argwhere(self.__circleApertureFlux > 0.8*self.__data['galaxy_1.5pr'].sum())[0])
+        # r20 = float(np.argwhere(self.__circleApertureFlux > 0.2*self.__data['galaxy']['1.5pr'].sum())[0])
+        # r80 = float(np.argwhere(self.__circleApertureFlux > 0.8*self.__data['galaxy']['1.5pr'].sum())[0])
         # self.__structural_parameters['concentration'] = np.log10(r80/r20)
         self.__flag['cal_c'] = True
         return self.__structural_parameters['concentration']
@@ -231,10 +251,9 @@ class Galaxy(object):
             self.__get_galaxy_data__()
         n = len(self.__meanSurfaceBrightness)
         f = np.copy(self.__meanSurfaceBrightness)*[(2*r+1.0)**2 for r in range(n)]
-        return float(np.argwhere(f > np.sum(self.__data['galaxy_1pr'])*0.5)[0])
+        return float(np.argwhere(f > np.sum(self.__data['galaxy']['1pr'])*0.5)[0])
 
     # core functions
-    # @log
     def __get_petrosian_radius__(self):
         if self.__flag['get_pr']:
             return
@@ -260,7 +279,6 @@ class Galaxy(object):
         self.__flag['get_pr'] = True
         return
 
-    # @log
     def __get_galaxy_data__(self):
         if self.__flag['get_gd']:
             return
@@ -268,14 +286,13 @@ class Galaxy(object):
             self.__get_petrosian_radius__()
         ct = self.__centroid['pix']
         ptr = self.__petrosianRadius
-        self.__data['galaxy_1pr'] = np.copy(self.__data['sky'][ct[0]-ptr:ct[0]+ptr+1, ct[1]-ptr:ct[1]+ptr+1])
-        self.__data['galaxy_1.5pr'] = np.copy(self.__data['sky'][ct[0]-ptr*1.5:ct[0]+ptr*1.5+1, ct[1]-ptr*1.5:ct[1]+ptr*1.5+1])
-        self.__data['galaxy_2pr'] = np.copy(self.__data['sky'][ct[0]-ptr*2:ct[0]+ptr*2+1, ct[1]-ptr*2:ct[1]+ptr*2+1])
-        self.__data['galaxy_2.5pr'] = np.copy(self.__data['sky'][ct[0]-ptr*2.5:ct[0]+ptr*2.5+1, ct[1]-ptr*2.5:ct[1]+ptr*2.5+1])
+        self.__data['galaxy']['1pr'] = np.copy(self.__data['sky'][ct[0]-ptr:ct[0]+ptr+1, ct[1]-ptr:ct[1]+ptr+1])
+        self.__data['galaxy']['1.5pr'] = np.copy(self.__data['sky'][ct[0]-ptr*1.5:ct[0]+ptr*1.5+1, ct[1]-ptr*1.5:ct[1]+ptr*1.5+1])
+        self.__data['galaxy']['2pr'] = np.copy(self.__data['sky'][ct[0]-ptr*2:ct[0]+ptr*2+1, ct[1]-ptr*2:ct[1]+ptr*2+1])
+        self.__data['galaxy']['2.5pr'] = np.copy(self.__data['sky'][ct[0]-ptr*2.5:ct[0]+ptr*2.5+1, ct[1]-ptr*2.5:ct[1]+ptr*2.5+1])
         self.__flag['get_gd'] = True
         return
 
-    # @log
     def __get_background__(self):
         if self.__flag['get_bg']:
             return
@@ -285,6 +302,8 @@ class Galaxy(object):
                                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         _SExtractorProcess.wait()
         self.__SExtractorOutput = _SExtractorProcess.stdout.readlines()
+        print('~~~~~~~~~~~~~~~~~~~~~')
+        print(self.__SExtractorOutput)
         _backgroundIndex = self.__SExtractorOutput.index(b'\x1b[1M> Scanning image\n')-1
         _backgroundInformation = self.__SExtractorOutput[_backgroundIndex].split()
         self.__background = {
@@ -297,27 +316,46 @@ class Galaxy(object):
                 self.__get_petrosian_radius__()
             ct = self.__centroid['pix']
             ptr = self.__petrosianRadius
-            self.__data['background_1pr'] = np.copy(np.array(bg[0].data)[ct[0]-ptr:ct[0]+ptr+1, ct[1]-ptr:ct[1]+ptr+1])
-            self.__data['background_1.5pr'] = np.copy(np.array(bg[0].data)[ct[0]-ptr*1.5:ct[0]+ptr*1.5+1, ct[1]-ptr*1.5:ct[1]+ptr*1.5+1])
-        self.__flag['get_bg'] = True
+            self.__data['background']['sky'] = np.copy(bg[0].data)
+            self.__data['background']['1pr'] = np.copy(bg[0].data[ct[0] - ptr:ct[0] + ptr + 1, ct[1] - ptr:ct[1] + ptr + 1])
+            self.__data['background']['1.5pr'] = np.copy(bg[0].data[ct[0] - ptr * 1.5:ct[0] + ptr * 1.5 + 1, ct[1] - ptr * 1.5:ct[1] + ptr * 1.5 + 1])
+            self.__data['background']['2pr'] = np.copy(bg[0].data[ct[0] - ptr * 2:ct[0] + ptr * 2 + 1, ct[1] - ptr * 2:ct[1] + ptr * 2 + 1])
+            self.__data['background']['2.5pr'] = np.copy(bg[0].data[ct[0] - ptr * 2.5:ct[0] + ptr * 2.5 + 1, ct[1] - ptr * 2.5:ct[1] + ptr * 2.5 + 1])
+            self.__flag['get_bg'] = True
         return
 
-    # @log
     def __get_segmentation_data__(self):
         if self.__flag['get_seg']:
             return
-        if op.exists(self.__file['galaxy']):
-            subprocess.call('rm %s' % self.__file['galaxy'], shell=True, executable=self.__sys['shell'])
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
-        # TODO 这里直接在函数里面生成的galaxy图像,后面测试完要封装起来
-        ft.writeto(self.__file['galaxy'], self.__data['galaxy_1pr'])
+        # ft.writeto(self.__file['galaxy'], self.__data['galaxy']['2.5pr'])
         conf = '-CHECKIMAGE_TYPE SEGMENTATION -CHECKIMAGE_NAME segmentation.fits'
-        subprocess.call('%s %s %s' % (self.__sys['sex'], self.__file['galaxy'], conf),
-                        shell=True, executable=self.__sys['shell'])
+        _SExtractorProcess = subprocess.Popen('%s %s %s' % (self.__sys['sex'], self.__file['sky'], conf),
+                                              shell=True, executable=self.__sys['shell'])
+        _SExtractorProcess.wait()
         with ft.open(self.__file['segmentation']) as seg:
-            self.__data['segmentation'] = np.copy(seg[0].data)
-        self.__flag['get_seg'] = True
+            ct = self.__centroid['pix']
+            ptr = self.__petrosianRadius
+            self.__data['segmentation']['sky'] = np.copy(seg[0].data)
+            self.__data['segmentation']['1pr'] = np.copy(seg[0].data[ct[0] - ptr:ct[0] + ptr + 1, ct[1] - ptr:ct[1] + ptr + 1])
+            self.__data['segmentation']['1.5pr'] = np.copy(seg[0].data[ct[0] - ptr * 1.5:ct[0] + ptr * 1.5 + 1, ct[1] - ptr * 1.5:ct[1] + ptr * 1.5 + 1])
+            self.__data['segmentation']['2pr'] = np.copy(seg[0].data[ct[0] - ptr * 2:ct[0] + ptr * 2 + 1, ct[1] - ptr * 2:ct[1] + ptr * 2 + 1])
+            self.__data['segmentation']['2.5pr'] = np.copy(seg[0].data[ct[0] - ptr * 2.5:ct[0] + ptr * 2.5 + 1, ct[1] - ptr * 2.5:ct[1] + ptr * 2.5 + 1])
+            self.__flag['get_seg'] = True
+        return
+
+    def __get_catalog__(self):
+        if self.__flag['get_gl']:
+            return
+        if (not self.__flag['get_seg']) and (not self.__flag['get_bg']):
+            self.__get_segmentation_data__()
+        gls = pd.read_table(self.__file['catalog'], header=None, sep='\s+', names=['m', 'x', 'y', 'cxx', 'cyy', 'cxy'])
+        gls['dist'] = abs(gls.y - self.__centroid['pix'][0]) + abs(gls.x - self.__centroid['pix'][1])
+        gls = gls.sort_values(by=['dist'])
+        gls.index = range(len(gls))
+        self.__galaxy = gls.ix[0]
+        self.__flag['get_gl'] = True
         return
 
     # visualizing methods
@@ -340,12 +378,12 @@ class Galaxy(object):
             self.__get_galaxy_data__()
         if rotated is True:
 
-            ft.writeto(self.__file['galaxy'], np.rot90(self.__data['galaxy_1pr'], 2))
+            ft.writeto(self.__file['galaxy'], np.rot90(self.__data['galaxy']['1pr'], 2))
             subprocess.call('mv %s %s' % (self.__file['galaxy'], path + name), shell=True, executable=self.__sys['shell'])
             subprocess.Popen('%s -scale mode zscale -zoom 4 %s' % (self.__sys['ds9'], path + 'rotated_' + name), shell=True,
                              executable=self.__sys['shell'])
         else:
-            ft.writeto(self.__file['galaxy'], self.__data['galaxy_1pr'])
+            ft.writeto(self.__file['galaxy'], self.__data['galaxy']['1pr'])
             subprocess.call('mv %s %s' % (self.__file['galaxy'], path+name), shell=True, executable=self.__sys['shell'])
             subprocess.Popen('%s -scale mode zscale -zoom 4 %s' % (self.__sys['ds9'], path+name), shell=True, executable=self.__sys['shell'])
         return
@@ -371,7 +409,7 @@ class Galaxy(object):
         return
 
 
-# @log
+@log
 def test():
 
     warnings.filterwarnings('ignore')
@@ -394,10 +432,10 @@ def test():
         name = ctl.NAME1+'_r.fits'
         ct = [ctl.RA1, ctl.DEC1]
         gl = Galaxy(fits_directory+name, ct, shell=shell, ds9=ds9, sextractor=sex)
-        print(gl.gini_parameter)
+        print(gl.background)
 
 
-# @log
+@log
 def load():
 
     # # Linux Ubuntu version
@@ -421,14 +459,16 @@ def load():
            34, 42, 43, 45, 46, 47]
     x = []
     y = []
-    for i in lst[:1]:
+    for i in lst[:]:
         sample = gls.ix[i]
+        # print(sample)
         gl = Galaxy(fits, [sample.Y_IMAGE, sample.X_IMAGE], centroid_mode='pix', shell=shell, ds9=ds9, sextractor=sex)
         # gl.show_galaxy_image()
-        ratio = abs(gl.gini_parameter-sample.Gini)/sample.Gini
-        x.append(gl.gini_parameter)
-        y.append(sample.Gini)
-        print(i, gl.gini_parameter, sample.Gini, ratio)
+        # gl.__get_segmentation_data__()
+        ratio = abs(gl.concentration_parameter-sample.Concentration)/sample.Concentration
+        x.append(gl.concentration_parameter)
+        y.append(sample.Concentration)
+        print(i, gl.concentration_parameter, sample.Concentration, ratio)
     sns.tsplot(x, color='r')
     sns.tsplot(y, color='b')
     plt.show()
