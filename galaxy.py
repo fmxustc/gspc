@@ -150,27 +150,25 @@ class Galaxy(object):
             return self.__structural_parameters['gini']
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
+        field = '2.5pr'
+        times = float(field.replace('pr', ''))
         if not self.__flag['get_seg']:
-            self.__get_segmentation_data__()
-        if not self.__flag['get_gl']:
-            self.__get_catalog__()
-        # TODO 这里直接在函数里面探测属于galaxy的pixels,后面测试完要封装起来
+            self.__get_segmentation_data__(field)
         _F = []
         gl = self.__galaxy
-        ptr = self.__petrosianRadius*2.5
-        print(gl, ptr/2.5, ptr)
+        ptr = self.__petrosianRadius*times
+        # use the segmentation map of the field with 2.5 times petrosian radius
+        seg = self.__data['segmentation'][field][gl.y][gl.x]
         for y in np.arange(2*ptr+1):
             for x in np.arange(2*ptr+1):
-                dist = gl.cxx*(x-ptr)**2+gl.cyy*(y-ptr)**2+gl.cxy*(x-ptr)*(y-ptr)-3.5**2
-                if self.__data['segmentation']['2.5pr'][y][x] and dist <= 0:
-                    _F.append(self.__data['galaxy']['2.5pr'][y][x])
-        # gl = self.__galaxy
-        # ptr = self.__petrosianRadius * 2.5
-        # print(gl.x, gl.y, ptr)
+                dist = gl.cxx*(x-gl.x)**2+gl.cyy*(y-gl.y)**2+gl.cxy*(x-gl.x)*(y-gl.y)-3.5**2
+                if self.__data['segmentation'][field][y][x] == seg and dist <= 0:
+                    _F.append(self.__data['galaxy'][field][y][x])
+        # # use the segmentation map of the whole sky field
         # for y in np.arange(gl.y - ptr, gl.y + ptr + 1):
         #     for x in np.arange(gl.x - ptr, gl.x + ptr + 1):
         #         dist = gl.cxx * (x - gl.x) ** 2 + gl.cyy * (y - gl.y) ** 2 + gl.cxy * (x - gl.x) * (y - gl.y) - 3.5 ** 2
-        #         if self.__data['segmentation']['2.5pr'][y][x] and dist <= 0:
+        #         if self.__data['segmentation']['sky'][y][x] and dist <= 0:
         #             _F.append(self.__data['sky'][y][x])
         n = len(_F)
         _F = np.array(sorted(_F))
@@ -181,24 +179,50 @@ class Galaxy(object):
 
     @property
     def moment_parameter(self):
+        # TODO 这里有问题,需要调试,可以尝试一下截大视场但是只用一个小区域
         if self.__flag['cal_m']:
             return self.__structural_parameters['moment']
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
-        ptr = self.__petrosianRadius*1
-        _F = np.sort(self.__data['galaxy']['1pr'].flatten())[::-1]
-        arg = np.argsort(self.__data['galaxy']['1pr'].flatten())[::-1]
-        dist = [((arg[t] // (2*ptr+1))-ptr)**2+((arg[t] % (2*ptr+1))-ptr)**2 for t in range(len(_F))]
-        _M = _F*np.array(dist)
-        for i in range(len(_F) - 1):
-            _F[i + 1] += _F[i]
-        bound = float(np.argwhere(_F > 0.2 * np.sum(self.__data['galaxy']['1pr']))[0])+1
-        self.__structural_parameters['moment'] = np.sum(_M[:bound])/_M.sum()
+        field = '1pr'
+        times = float(field.replace('pr', ''))
+        if not self.__flag['get_seg']:
+            self.__get_segmentation_data__(field)
+        moment = np.copy(self.__data['galaxy'][field])
+        gl = self.__galaxy
+        ptr = self.__petrosianRadius*times
+        seg = self.__data['segmentation'][field][gl.y][gl.x]
+        sf = 0
+        sm = 0
+        for y in np.arange(2*ptr+1):
+            for x in np.arange(2*ptr+1):
+                moment[y][x] *= (y-gl.y)**2+(x-gl.x)**2
+                if self.__data['segmentation'][field][y][x] == seg:
+                    sf += self.__data['galaxy'][field][y][x]
+                    sm += moment[y][x]
+        _F = np.sort(np.copy(self.__data['galaxy'][field]).flatten())[::-1]
+        arg = np.argsort(np.copy(self.__data['galaxy'][field]).flatten())[::-1]
+        n = len(_F)
+        f = 0
+        m = 0
+        for i in range(n):
+            y = arg[i] // (2*ptr+1)
+            x = arg[i] % (2*ptr+1)
+            if self.__data['segmentation'][field][y][x] == seg:
+                f += self.__data['galaxy'][field][y][x]
+                m += moment[y][x]
+                if f < sf*0.2:
+                    self.__data['segmentation'][field][y][x] = -1
+                    self.__structural_parameters['moment'] = m/sm
+        if op.exists('tmp.fits'):
+            subprocess.call('rm tmp.fits', shell=True, executable=self.__sys['shell'])
+        ft.writeto('tmp.fits', self.__data['segmentation'][field])
         self.__flag['cal_m'] = True
         return self.__structural_parameters['moment']
 
     @property
     def asymmetry_parameter(self):
+        # TODO 1.背景探测 2.污染消除
         if self.__flag['cal_a']:
             return self.__structural_parameters['asymmetry']
         if not self.__flag['get_gd']:
@@ -296,15 +320,16 @@ class Galaxy(object):
     def __get_background__(self):
         if self.__flag['get_bg']:
             return
+        if op.exists(self.__file['galaxy']):
+            subprocess.call('rm %s' % self.__file['galaxy'], shell=True, executable=self.__sys['shell'])
+        ft.writeto(self.__file['galaxy'], self.__data['galaxy']['2.5pr'])
         conf = '-CHECKIMAGE_TYPE BACKGROUND -CHECKIMAGE_NAME background.fits'
-        _SExtractorProcess = subprocess.Popen('%s %s %s' % (self.__sys['sex'], self.__file['sky'], conf),
+        _SExtractorProcess = subprocess.Popen('%s %s %s' % (self.__sys['sex'], self.__file['galaxy'], conf),
                                               shell=True, executable=self.__sys['shell'],
                                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         _SExtractorProcess.wait()
         self.__SExtractorOutput = _SExtractorProcess.stdout.readlines()
-        print('~~~~~~~~~~~~~~~~~~~~~')
-        print(self.__SExtractorOutput)
-        _backgroundIndex = self.__SExtractorOutput.index(b'\x1b[1M> Scanning image\n')-1
+        _backgroundIndex = self.__SExtractorOutput.index(b'\x1b[1M> Scanning image\n') - 1
         _backgroundInformation = self.__SExtractorOutput[_backgroundIndex].split()
         self.__background = {
             'mean': float(_backgroundInformation[2]),
@@ -312,46 +337,78 @@ class Galaxy(object):
             'threshold': float(_backgroundInformation[7]),
         }
         with ft.open(self.__file['background']) as bg:
-            if not self.__flag['get_pr']:
-                self.__get_petrosian_radius__()
-            ct = self.__centroid['pix']
             ptr = self.__petrosianRadius
-            self.__data['background']['sky'] = np.copy(bg[0].data)
-            self.__data['background']['1pr'] = np.copy(bg[0].data[ct[0] - ptr:ct[0] + ptr + 1, ct[1] - ptr:ct[1] + ptr + 1])
-            self.__data['background']['1.5pr'] = np.copy(bg[0].data[ct[0] - ptr * 1.5:ct[0] + ptr * 1.5 + 1, ct[1] - ptr * 1.5:ct[1] + ptr * 1.5 + 1])
-            self.__data['background']['2pr'] = np.copy(bg[0].data[ct[0] - ptr * 2:ct[0] + ptr * 2 + 1, ct[1] - ptr * 2:ct[1] + ptr * 2 + 1])
-            self.__data['background']['2.5pr'] = np.copy(bg[0].data[ct[0] - ptr * 2.5:ct[0] + ptr * 2.5 + 1, ct[1] - ptr * 2.5:ct[1] + ptr * 2.5 + 1])
+            self.__data['background']['1.5pr'] = np.copy(bg[0].data[1.5*ptr:3.5*ptr+1, 1.5*ptr:3.5*ptr+1])
             self.__flag['get_bg'] = True
+        # _SExtractorProcess = subprocess.Popen('%s %s %s' % (self.__sys['sex'], self.__file['sky'], conf),
+        #                                       shell=True, executable=self.__sys['shell'],
+        #                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        # _SExtractorProcess.wait()
+        # self.__SExtractorOutput = _SExtractorProcess.stdout.readlines()
+        # _backgroundIndex = self.__SExtractorOutput.index(b'\x1b[1M> Scanning image\n')-1
+        # _backgroundInformation = self.__SExtractorOutput[_backgroundIndex].split()
+        # self.__background = {
+        #     'mean': float(_backgroundInformation[2]),
+        #     'rms': float(_backgroundInformation[4]),
+        #     'threshold': float(_backgroundInformation[7]),
+        # }
+        # with ft.open(self.__file['background']) as bg:
+        #     if not self.__flag['get_pr']:
+        #         self.__get_petrosian_radius__()
+        #     ct = self.__centroid['pix']
+        #     ptr = self.__petrosianRadius
+        #     self.__data['background']['sky'] = np.copy(bg[0].data)
+        #     self.__data['background']['1pr'] = np.copy(bg[0].data[ct[0] - ptr:ct[0] + ptr + 1, ct[1] - ptr:ct[1] + ptr + 1])
+        #     self.__data['background']['1.5pr'] = np.copy(bg[0].data[ct[0] - ptr * 1.5:ct[0] + ptr * 1.5 + 1, ct[1] - ptr * 1.5:ct[1] + ptr * 1.5 + 1])
+        #     self.__data['background']['2pr'] = np.copy(bg[0].data[ct[0] - ptr * 2:ct[0] + ptr * 2 + 1, ct[1] - ptr * 2:ct[1] + ptr * 2 + 1])
+        #     self.__data['background']['2.5pr'] = np.copy(bg[0].data[ct[0] - ptr * 2.5:ct[0] + ptr * 2.5 + 1, ct[1] - ptr * 2.5:ct[1] + ptr * 2.5 + 1])
+        #     self.__flag['get_bg'] = True
         return
 
-    def __get_segmentation_data__(self):
+    def __get_segmentation_data__(self, field='2.5pr'):
         if self.__flag['get_seg']:
             return
         if not self.__flag['get_gd']:
             self.__get_galaxy_data__()
-        # ft.writeto(self.__file['galaxy'], self.__data['galaxy']['2.5pr'])
+        # detect the segmentation map of the field with 2.5 times petrosian radius
+        if op.exists(self.__file['galaxy']):
+            subprocess.call('rm %s' % self.__file['galaxy'], shell=True, executable=self.__sys['shell'])
+        ft.writeto(self.__file['galaxy'], self.__data['galaxy'][field])
         conf = '-CHECKIMAGE_TYPE SEGMENTATION -CHECKIMAGE_NAME segmentation.fits'
-        _SExtractorProcess = subprocess.Popen('%s %s %s' % (self.__sys['sex'], self.__file['sky'], conf),
+        _SExtractorProcess = subprocess.Popen('%s %s %s' % (self.__sys['sex'], self.__file['galaxy'], conf),
                                               shell=True, executable=self.__sys['shell'])
         _SExtractorProcess.wait()
+        times = float(field.replace('pr', ''))
+        self.__get_catalog__(times)
         with ft.open(self.__file['segmentation']) as seg:
-            ct = self.__centroid['pix']
             ptr = self.__petrosianRadius
-            self.__data['segmentation']['sky'] = np.copy(seg[0].data)
-            self.__data['segmentation']['1pr'] = np.copy(seg[0].data[ct[0] - ptr:ct[0] + ptr + 1, ct[1] - ptr:ct[1] + ptr + 1])
-            self.__data['segmentation']['1.5pr'] = np.copy(seg[0].data[ct[0] - ptr * 1.5:ct[0] + ptr * 1.5 + 1, ct[1] - ptr * 1.5:ct[1] + ptr * 1.5 + 1])
-            self.__data['segmentation']['2pr'] = np.copy(seg[0].data[ct[0] - ptr * 2:ct[0] + ptr * 2 + 1, ct[1] - ptr * 2:ct[1] + ptr * 2 + 1])
-            self.__data['segmentation']['2.5pr'] = np.copy(seg[0].data[ct[0] - ptr * 2.5:ct[0] + ptr * 2.5 + 1, ct[1] - ptr * 2.5:ct[1] + ptr * 2.5 + 1])
+            ct = [np.copy(seg[0].data).shape[0]//2, np.copy(seg[0].data).shape[1]//2]
+            self.__data['segmentation'][field] = np.copy(seg[0].data[ct[0]-ptr*times:ct[0]+ptr*times+1, ct[1]-ptr*times:ct[1]+ptr*times+1])
             self.__flag['get_seg'] = True
+        # # detect the segmentation map of the whole sky field
+        # conf = '-CHECKIMAGE_TYPE SEGMENTATION -CHECKIMAGE_NAME segmentation.fits'
+        #
+        # _SExtractorProcess = subprocess.Popen('%s %s %s' % (self.__sys['sex'], self.__file['sky'], conf),
+        #                                       shell=True, executable=self.__sys['shell'])
+        # _SExtractorProcess.wait()
+        # with ft.open(self.__file['segmentation']) as seg:
+        #     ct = self.__centroid['pix']
+        #     ptr = self.__petrosianRadius
+        #     self.__data['segmentation']['sky'] = np.copy(seg[0].data)
+        #     self.__data['segmentation']['1pr'] = np.copy(seg[0].data[ct[0] - ptr:ct[0] + ptr + 1, ct[1] - ptr:ct[1] + ptr + 1])
+        #     self.__data['segmentation']['1.5pr'] = np.copy(seg[0].data[ct[0] - ptr * 1.5:ct[0] + ptr * 1.5 + 1, ct[1] - ptr * 1.5:ct[1] + ptr * 1.5 + 1])
+        #     self.__data['segmentation']['2pr'] = np.copy(seg[0].data[ct[0] - ptr * 2:ct[0] + ptr * 2 + 1, ct[1] - ptr * 2:ct[1] + ptr * 2 + 1])
+        #     self.__data['segmentation']['2.5pr'] = np.copy(seg[0].data[ct[0] - ptr * 2.5:ct[0] + ptr * 2.5 + 1, ct[1] - ptr * 2.5:ct[1] + ptr * 2.5 + 1])
+        #     self.__flag['get_seg'] = True
         return
 
-    def __get_catalog__(self):
-        if self.__flag['get_gl']:
-            return
-        if (not self.__flag['get_seg']) and (not self.__flag['get_bg']):
-            self.__get_segmentation_data__()
+    def __get_catalog__(self, times):
         gls = pd.read_table(self.__file['catalog'], header=None, sep='\s+', names=['m', 'x', 'y', 'cxx', 'cyy', 'cxy'])
-        gls['dist'] = abs(gls.y - self.__centroid['pix'][0]) + abs(gls.x - self.__centroid['pix'][1])
+        # deal the catalog found of the field with 2.5 times petrosian radius
+        ptr = self.__petrosianRadius*times
+        gls['dist'] = abs(gls.y - ptr) + abs(gls.x - ptr)
+        # # deal the catalog found of the field of the whole sky
+        # gls['dist'] = abs(gls.y - self.__centroid['pix'][0]) + abs(gls.x - self.__centroid['pix'][1])
         gls = gls.sort_values(by=['dist'])
         gls.index = range(len(gls))
         self.__galaxy = gls.ix[0]
@@ -459,19 +516,18 @@ def load():
            34, 42, 43, 45, 46, 47]
     x = []
     y = []
+    ratio = []
     for i in lst[:]:
         sample = gls.ix[i]
-        # print(sample)
         gl = Galaxy(fits, [sample.Y_IMAGE, sample.X_IMAGE], centroid_mode='pix', shell=shell, ds9=ds9, sextractor=sex)
-        # gl.show_galaxy_image()
-        # gl.__get_segmentation_data__()
-        ratio = abs(gl.concentration_parameter-sample.Concentration)/sample.Concentration
-        x.append(gl.concentration_parameter)
-        y.append(sample.Concentration)
-        print(i, gl.concentration_parameter, sample.Concentration, ratio)
-    sns.tsplot(x, color='r')
-    sns.tsplot(y, color='b')
-    plt.show()
+        ratio.append(abs(gl.moment_parameter-sample.M20)/sample.M20)
+        x.append(gl.moment_parameter)
+        y.append(sample.M20)
+    for i in range(len(ratio)):
+        print(i, x[i], y[i], ratio[i])
+    # sns.tsplot(x, color='r')
+    # sns.tsplot(y, color='b')
+    # plt.show()
 
 
 if __name__ == '__main__':
