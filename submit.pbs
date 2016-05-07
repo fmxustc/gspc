@@ -1,0 +1,8 @@
+#PBS -N GSPC
+#PBS -l nodes=node3:ppn=1
+#PBS -j oe
+#PBS -l walltime=10:00:00
+
+cd /public/home/fmxustc/astronomy/gspc
+
+py ./calculate.py

@@ -10,7 +10,6 @@ import astropy.wcs as wcs
 import warnings
 import json
 import random
-import os
 
 
 # log
@@ -31,7 +30,7 @@ def log(func):
 
 class Galaxy(object):
 
-    @log
+    # @log
     def __init__(self, sky, centroid, centroid_mode='world',
                  shell='/usr/bin/zsh', ds9='ds9', sextractor='sextractor', **field):
         """initialize"""
@@ -172,7 +171,6 @@ class Galaxy(object):
 
     @property
     def moment_parameter(self):
-        # TODO 这里有问题,需要调试,可以尝试一下截大视场但是只用一个小区域
         if self.__flag['cal_m']:
             return self.__structural_parameters['moment']
         if not self.__flag['get_gd']:
@@ -203,18 +201,18 @@ class Galaxy(object):
             if self.__data['segmentation'][field][y][x] == seg:
                 f += self.__data['galaxy'][field][y][x]
                 m += moment[y][x]
-                if f < sf*0.25:
+                if f < sf*0.2:
                     self.__data['segmentation'][field][y][x] = -1
                     self.__structural_parameters['moment'] = m/sm
-        if op.exists('tmp.fits'):
-            subprocess.call('rm tmp.fits', shell=True, executable=self.__sys['shell'])
-        ft.writeto('tmp.fits', self.__data['segmentation'][field])
-        self.__flag['cal_m'] = True
+                    self.__flag['cal_m'] = True
+        # if op.exists('tmp.fits'):
+        #     subprocess.call('rm tmp.fits', shell=True, executable=self.__sys['shell'])
+        # ft.writeto('tmp.fits', self.__data['segmentation'][field])
         return self.__structural_parameters['moment']
 
     @property
     def asymmetry_parameter(self):
-        # TODO 尝试用sex的OBJECTS模式算一下
+        # ignore the influence of the background
         if self.__flag['cal_a']:
             return self.__structural_parameters['asymmetry']
         self.__set_field__('background')
@@ -224,35 +222,11 @@ class Galaxy(object):
         gl = self.__galaxy
         ptr = self.__petrosianRadius
         radius_times = float(cal_field.replace('pr', ''))
-
         _I = np.copy(self.__data['galaxy'][bg_field][gl.y-ptr*radius_times:gl.y+ptr*radius_times+1,
                                                      gl.x-ptr*radius_times:gl.x+ptr*radius_times+1])
 
-        _B = np.copy(self.__data['background'][cal_field])
-        if op.exists(self.__file['tmp']):
-            subprocess.call('rm %s' % self.__file['tmp'], shell=True, executable=self.__sys['shell'])
-        ft.writeto(self.__file['tmp'], _B)
-        subprocess.Popen('%s -scale mode zscale -zoom 1 %s' % (self.__sys['ds9'], self.__file['tmp']), shell=True, executable=self.__sys['shell'])
-        # print(np.sum(_B))
-        # subprocess.call('rm *.fits', shell=True, executable=self.__sys['shell'])
-        # input("Press enter to continue")
-
-        # _B = np.copy(self.__data['background'][bg_field][gl.y-ptr*radius_times:gl.y+ptr*radius_times+1,
-        #                                                  gl.x-ptr*radius_times:gl.x+ptr*radius_times+1])
-        # if op.exists(self.__file['tmp']):
-        #     subprocess.call('rm %s' % self.__file['tmp'], shell=True, executable=self.__sys['shell'])
-        # ft.writeto(self.__file['tmp'], _B)
-        # subprocess.Popen('%s -scale mode zscale -zoom 1 %s' % (self.__sys['ds9'], self.__file['tmp']), shell=True, executable=self.__sys['shell'])
-        # print(np.sum(_B))
-
         _I180 = np.rot90(_I, 2)
-        _B180 = np.rot90(_B, 2)
-        a = np.sum(abs(_I-_I180))/(np.sum(abs(_I)))
-        b = np.sum(abs(_B-_B180))/np.sum(abs(_B))
-        print(np.sum(abs(_I-_I180)), np.sum(abs(_I)), a)
-        print(np.sum(abs(_B-_B180)), np.sum(abs(_B)), b)
-
-        self.__structural_parameters['asymmetry'] = np.sum(abs(_I-_I180))/(np.sum(abs(_I))) - np.sum(abs(_B-_B180))/np.sum(abs(_B))
+        self.__structural_parameters['asymmetry'] = np.sum(abs(_I-_I180))/np.sum(abs(_I))
         self.__flag['cal_a'] = True
         return self.__structural_parameters['asymmetry']
 
@@ -262,31 +236,29 @@ class Galaxy(object):
             return self.__structural_parameters['concentration']
         if not self.__flag['get_pr']:
             self.__get_petrosian_radius__()
-        # if not self.__flag['get_bg']:
-        #     self.__get_background__()
-        # rms = self.__background['rms']
-        rms = 0.00432403
+        if not self.__flag['get_bg']:
+            self.__get_background_map__(detect_field='sky')
+        rms = self.__background['rms']
         n = len(self.__meanSurfaceBrightness)
         self.__circleApertureFlux = np.array([(2*(r+1)-1)**2 for r in range(n)])*self.__meanSurfaceBrightness
-        r = min(n-1, self.__petrosianRadius*1.5, float(np.argwhere(self.__surfaceBrightness < 2*rms)[0]))
+        try:
+            k = float(np.argwhere(self.__surfaceBrightness < 2*rms)[0])
+        except IndexError:
+            k = float(np.argwhere(self.__surfaceBrightness < 3*rms)[0])
+        r = min(n-1, self.__petrosianRadius*1.5, k)
         self.__structural_parameters['concentration'] = self.__circleApertureFlux[0.3*r]/self.__circleApertureFlux[r]
-        # r50 = float(np.argwhere(self.__circleApertureFlux > 0.5*self.__data['galaxy']['1pr'].sum())[0])
-        # self.__structural_parameters['concentration'] = self.__circleApertureFlux[0.3*r50]/self.__circleApertureFlux[r50]
-        # r20 = float(np.argwhere(self.__circleApertureFlux > 0.2*self.__data['galaxy']['1.5pr'].sum())[0])
-        # r80 = float(np.argwhere(self.__circleApertureFlux > 0.8*self.__data['galaxy']['1.5pr'].sum())[0])
-        # self.__structural_parameters['concentration'] = np.log10(r80/r20)
         self.__flag['cal_c'] = True
         return self.__structural_parameters['concentration']
 
     @property
     def structural_parameters(self):
         if not self.__flag['get_sp']:
-            self.__structural_parameters['gini'] = self.gini_parameter
-            self.__structural_parameters['moment'] = self.moment_parameter
-            self.__structural_parameters['asymmetry'] = self.asymmetry_parameter
-            self.__structural_parameters['concentration'] = self.concentration_parameter
+            self.__structural_parameters['gini'] = float(self.gini_parameter)
+            self.__structural_parameters['moment'] = float(self.moment_parameter)
+            self.__structural_parameters['asymmetry'] = float(self.asymmetry_parameter)
+            self.__structural_parameters['concentration'] = float(self.concentration_parameter)
             self.__flag['get_sp'] = True
-        return json.dumps(self.__structural_parameters, indent=4)
+        return json.dumps(self.__structural_parameters, indent=4, sort_keys=True)
 
     @property
     def half_light_radius_in_pixels(self):
@@ -340,7 +312,7 @@ class Galaxy(object):
             return
         _rightDistance = np.array(self.__data['sky'].shape)-np.array(self.__centroid['pix'])
         _leftDistance = np.array(self.__centroid['pix'])
-        _boxSize = np.min([_rightDistance, _leftDistance, [300, 300]])
+        _boxSize = int(np.min([_rightDistance, _leftDistance, [300, 300]]))
         self.__surfaceBrightness = np.zeros(_boxSize)
         for y in np.arange(self.__centroid['pix'][0]-_boxSize+1, self.__centroid['pix'][0]+_boxSize):
             for x in np.arange(self.__centroid['pix'][1]-_boxSize+1, self.__centroid['pix'][1]+_boxSize):
@@ -352,12 +324,17 @@ class Galaxy(object):
                 self.__meanSurfaceBrightness[1] += self.__meanSurfaceBrightness[0]
             else:
                 if r < float(int(_boxSize - 1)):
+                    print(r)
                     self.__meanSurfaceBrightness[r + 1] += self.__meanSurfaceBrightness[r]
                 self.__surfaceBrightness[r] /= 8*r
                 self.__meanSurfaceBrightness[r] /= (2*(r+1)-1)**2
         eta = self.__surfaceBrightness/self.__meanSurfaceBrightness
-        self.__petrosianRadius = float(np.argwhere(eta < 0.2)[0])
-        self.__flag['get_pr'] = True
+        try:
+            self.__petrosianRadius = float(np.argwhere(eta < 0.2)[0])
+        except IndexError:
+            self.__petrosianRadius = float(np.argwhere(eta < 0.25)[0])
+        finally:
+            self.__flag['get_pr'] = True
         return
 
     # @log
@@ -376,8 +353,8 @@ class Galaxy(object):
         self.__flag['get_gd'][field] = True
         return
 
-    @log
-    def __get_background_map__(self, detect_field, truncate_field, ignore_flag=False):
+    # @log
+    def __get_background_map__(self, detect_field='sky', truncate_field='1.5pr', ignore_flag=False):
         if truncate_field in self.__flag['get_bg'] and ignore_flag is False:
             return
         if detect_field not in self.__flag['get_bg']:
@@ -390,7 +367,6 @@ class Galaxy(object):
                                               shell=True, executable=self.__sys['shell'],
                                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         _SExtractorProcess.wait()
-        # subprocess.Popen('%s -scale mode zscale -zoom 2 %s' % (self.__sys['ds9'], self.__file['background']), shell=True, executable=self.__sys['shell'])
         self.__SExtractorOutput = _SExtractorProcess.stdout.readlines()
         _backgroundIndex = self.__SExtractorOutput.index(b'\x1b[1M> Scanning image\n') - 1
         _backgroundInformation = self.__SExtractorOutput[_backgroundIndex].split()
@@ -401,15 +377,18 @@ class Galaxy(object):
         }
         self.__get_catalog__(field=detect_field)
         with ft.open(self.__file['background']) as bg:
-            cty, ctx = self.__galaxy.y, self.__galaxy.x
-            truncate_times = float(truncate_field.replace('pr', ''))
-            ptr = self.__petrosianRadius
-            self.__data['background'][truncate_field] = np.copy(bg[0].data[cty - ptr * truncate_times:cty + ptr * truncate_times + 1, ctx - ptr * truncate_times:ctx + ptr * truncate_times + 1])
+            if truncate_field == 'sky':
+                self.__data['background'][truncate_field] = np.copy(bg[0].data)
+            else:
+                cty, ctx = self.__galaxy.y, self.__galaxy.x
+                truncate_times = float(truncate_field.replace('pr', ''))
+                ptr = self.__petrosianRadius
+                self.__data['background'][truncate_field] = np.copy(bg[0].data[cty - ptr * truncate_times:cty + ptr * truncate_times + 1, ctx - ptr * truncate_times:ctx + ptr * truncate_times + 1])
             self.__flag['get_bg'][truncate_field] = True
         return
 
     # @log
-    def __get_segmentation_map__(self, detect_field='sky', truncate_field='1.5pr', ignore_flag=False):
+    def __get_segmentation_map__(self, detect_field='sky', truncate_field='3pr', ignore_flag=False):
         if truncate_field in self.__flag['get_seg'] and ignore_flag is False:
             return
         if detect_field not in self.__flag['get_gd']:
@@ -423,10 +402,13 @@ class Galaxy(object):
         _SExtractorProcess.wait()
         self.__get_catalog__(field=detect_field)
         with ft.open(self.__file['segmentation']) as seg:
-            cty, ctx = self.__galaxy.y, self.__galaxy.x
-            truncate_times = float(truncate_field.replace('pr', ''))
-            ptr = self.__petrosianRadius
-            self.__data['segmentation'][truncate_field] = np.copy(seg[0].data[cty-ptr*truncate_times:cty+ptr*truncate_times+1, ctx-ptr*truncate_times:ctx+ptr*truncate_times+1])
+            if truncate_field == 'sky':
+                self.__data['segmentation'][truncate_field] = np.copy(seg[0].data)
+            else:
+                cty, ctx = self.__galaxy.y, self.__galaxy.x
+                truncate_times = float(truncate_field.replace('pr', ''))
+                ptr = self.__petrosianRadius
+                self.__data['segmentation'][truncate_field] = np.copy(seg[0].data[cty-ptr*truncate_times:cty+ptr*truncate_times+1, ctx-ptr*truncate_times:ctx+ptr*truncate_times+1])
             self.__flag['get_seg'][truncate_field] = True
         return
 
@@ -446,7 +428,9 @@ class Galaxy(object):
         return
 
     # @log
-    def __eliminate_pollutions__(self, detect_field='10pr', deal_field='3pr'):
+    def __eliminate_pollutions__(self, detect_field='10pr', deal_field='1.5pr'):
+        if not self.__flag['get_pr']:
+            self.__get_petrosian_radius__()
         if detect_field not in self.__flag['get_bg']:
             self.__get_background_map__(detect_field=detect_field, truncate_field=detect_field)
         if detect_field not in self.__flag['get_seg']:
@@ -456,22 +440,17 @@ class Galaxy(object):
         radius_times = float(deal_field.replace('pr', ''))
         gl = self.__galaxy
         seg = self.__data['segmentation'][detect_field][gl.y][gl.x]
-        mean = self.__background['mean']
         rms = self.__background['rms']
         for y in np.arange(gl.y-ptr*radius_times, gl.y+ptr*radius_times+1):
             for x in np.arange(gl.x-ptr*radius_times, gl.x+ptr*radius_times+1):
                 value = self.__data['segmentation'][detect_field][y][x]
                 if value > seg:
-                    self.__data['galaxy'][detect_field][y][x] = random.uniform(mean-rms*1.5, mean+rms*1.5)
+                    self.__data['galaxy'][detect_field][y][x] = random.uniform(rms, rms*3)
         if op.exists(self.__file['tmp']):
             subprocess.call('rm %s' % self.__file['tmp'], shell=True, executable=self.__sys['shell'])
-        ft.writeto(self.__file['tmp'], self.__data['galaxy'][detect_field][gl.y-ptr*radius_times:gl.y+ptr*radius_times+1,
-                                                                           gl.x-ptr*radius_times:gl.x+ptr*radius_times+1])
-        conf = '-CHECKIMAGE_TYPE BACKGROUND -CHECKIMAGE_NAME %s' % self.__file['background']
-        subprocess.call('%s %s %s' % (self.__sys['sex'], self.__file['tmp'], conf),
-                        shell=True, executable=self.__sys['shell'])
-        with ft.open(self.__file['background']) as bg:
-            self.__data['background'][deal_field] = np.copy(bg[0].data)
+        # ft.writeto(self.__file['tmp'], self.__data['galaxy'][detect_field][gl.y-ptr*radius_times:gl.y+ptr*radius_times+1,
+        #                                                                    gl.x - ptr * radius_times:gl.x + ptr * radius_times + 1])
+        # subprocess.Popen('%s -scale mode zscale -zoom 2 %s' % (self.__sys['ds9'], self.__file['tmp']), shell=True, executable=self.__sys['shell'])
         return
 
     # visualizing methods
@@ -536,7 +515,7 @@ class Galaxy(object):
         return
 
 
-@log
+# @log
 def test():
 
     warnings.filterwarnings('ignore')
@@ -548,24 +527,23 @@ def test():
     # ds9 = 'ds9'
     # sex = 'sextractor'
 
-    # # Mac OS version
-    # fits_directory = '/Users/franky/Desktop/type1cut/'
-    # shell = '/bin/zsh'
-    # ds9 = '~/bin/ds9'
-    # sex = 'sex'
-    #
-    # for i in range(1):
-    #     ctl = catalog.ix[i]
-    #     name = ctl.NAME1+'_r.fits'
-    #     ct = [ctl.RA1, ctl.DEC1]
-    #     gl = Galaxy(fits_directory+name, ct, shell=shell, ds9=ds9, sextractor=sex)
-    #     print(gl.background)
+    # Mac OS version
+    fits_directory = '/Users/franky/Desktop/type1cut/'
+    shell = '/bin/zsh'
+    ds9 = '~/bin/ds9'
+    sex = '/sw/bin/sex'
 
-    a = np.random.beta(1,2,(100,100))
-    ft.writeto('test.fits', a)
+    for i in range(5, 6):
+        ctl = catalog.ix[i]
+        name = ctl.NAME1+'_r.fits'
+        ct = [ctl.RA1, ctl.DEC1]
+        gl = Galaxy(fits_directory+name, ct, shell=shell, ds9=ds9, sextractor=sex,
+                    field={'gini': {'detect': 'sky', 'truncate': '1.5pr'},
+                           'background': {'detect': 'sky', 'truncate': '1.5pr'}})
+        gl.__eliminate_pollutions__(detect_field='sky', deal_field='2pr')
 
 
-@log
+# @log
 def load():
 
     # # Linux Ubuntu version
@@ -580,7 +558,7 @@ def load():
     fits = '/Users/franky/Desktop/check/sky.fits'
     shell = '/bin/zsh'
     ds9 = '~/bin/ds9'
-    sex = 'sex'
+    sex = '/sw/bin/sex'
 
     gls = data[(data.HalfLightRadiusInPixels > 20) &
                (data.HalfLightRadiusInPixels < 25)]
@@ -592,15 +570,18 @@ def load():
     ratio = []
     for i in lst[0:1]:
         sample = gls.ix[i]
+        print(sample)
         gl = Galaxy(fits, [sample.Y_IMAGE, sample.X_IMAGE], centroid_mode='pix', shell=shell, ds9=ds9, sextractor=sex,
                     field={'gini': {'detect': 'sky', 'truncate': '1.5pr'},
                            'background': {'detect': '5pr', 'truncate': '1.5pr'}})
+        gl.__eliminate_pollutions__()
+        # print(gl.asymmetry_parameter)
         # gl.show_galaxy_image(field='1.5pr')
         # gl.show_galaxy_image(field='1.5pr', rotated=True)
         # gl.show_residual_image()
-        ratio.append(abs(gl.moment_parameter-sample.M20)/sample.M20)
-        x.append(gl.moment_parameter)
-        y.append(sample.M20)
+        # ratio.append(abs(gl.moment_parameter-sample.M20)/sample.M20)
+        # x.append(gl.moment_parameter)
+        # y.append(sample.M20)
     for i in range(len(ratio)):
         print(i, x[i], y[i], ratio[i])
     # sns.tsplot(x, color='r')
@@ -609,5 +590,5 @@ def load():
 
 
 if __name__ == '__main__':
-    # test()
-    load()
+    test()
+    # load()
