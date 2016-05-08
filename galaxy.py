@@ -157,10 +157,11 @@ class Galaxy(object):
         radius_times = float(cal_field.replace('pr', ''))
         ptr = self.__petrosianRadius
         cty = ctx = ptr*radius_times
+        seg = self.__data['segmentation'][cal_field][cty][ctx]
         for y in np.arange(2*radius_times*ptr+1):
             for x in np.arange(2*radius_times*ptr+1):
                 dist = gl.cxx*(x-ctx)**2+gl.cyy*(y-cty)**2+gl.cxy*(x-ctx)*(y-cty)-3.5**2
-                if self.__data['segmentation'][cal_field][y][x] and dist <= 0:
+                if self.__data['segmentation'][cal_field][y][x] == seg and dist <= 0:
                     _F.append(self.__data['galaxy'][cal_field][y][x])
         n = len(_F)
         _F = np.array(sorted(_F))
@@ -244,7 +245,10 @@ class Galaxy(object):
         try:
             k = float(np.argwhere(self.__surfaceBrightness < 2*rms)[0])
         except IndexError:
-            k = float(np.argwhere(self.__surfaceBrightness < 3*rms)[0])
+            try:
+                k = float(np.argwhere(self.__surfaceBrightness < 3 * rms)[0])
+            except IndexError:
+                k = float(np.argwhere(self.__surfaceBrightness < 4 * rms)[0])
         r = min(n-1, self.__petrosianRadius*1.5, k)
         self.__structural_parameters['concentration'] = self.__circleApertureFlux[0.3*r]/self.__circleApertureFlux[r]
         self.__flag['cal_c'] = True
@@ -324,16 +328,18 @@ class Galaxy(object):
                 self.__meanSurfaceBrightness[1] += self.__meanSurfaceBrightness[0]
             else:
                 if r < float(int(_boxSize - 1)):
-                    print(r)
                     self.__meanSurfaceBrightness[r + 1] += self.__meanSurfaceBrightness[r]
                 self.__surfaceBrightness[r] /= 8*r
                 self.__meanSurfaceBrightness[r] /= (2*(r+1)-1)**2
         eta = self.__surfaceBrightness/self.__meanSurfaceBrightness
+        # self.show_eta_curve()
         try:
             self.__petrosianRadius = float(np.argwhere(eta < 0.2)[0])
         except IndexError:
-            self.__petrosianRadius = float(np.argwhere(eta < 0.25)[0])
+            self.__petrosianRadius = float(np.argmin(eta[:int(min(len(eta), 100))]))
         finally:
+            if self.__petrosianRadius < 20:
+                self.__petrosianRadius = float(np.argmin(eta[:30]))
             self.__flag['get_pr'] = True
         return
 
@@ -462,7 +468,7 @@ class Galaxy(object):
     def show_eta_curve(self):
         if not self.__flag['get_pr']:
             self.__get_petrosian_radius__()
-        sns.tsplot(self.__surfaceBrightness/self.__meanSurfaceBrightness)
+        sns.tsplot(self.__surfaceBrightness[:35]/self.__meanSurfaceBrightness[:35])
         plt.show()
         return
 
@@ -474,14 +480,15 @@ class Galaxy(object):
                 subprocess.call('rm %s' % path+'rotated_'+name, shell=True, executable=self.__sys['shell'])
             ft.writeto('rotated_' + name, np.rot90(self.__data['galaxy'][field], 2))
             subprocess.call('mv %s %s' % ('rotated_'+name, path + 'rotated_' + name), shell=True, executable=self.__sys['shell'])
-            subprocess.Popen('%s -scale mode zscale -zoom 2 %s' % (self.__sys['ds9'], path + 'rotated_' + name), shell=True,
+            subprocess.Popen('%s -scale mode zscale -zoom 4 %s' % (self.__sys['ds9'], path + 'rotated_' + name), shell=True,
                              executable=self.__sys['shell'])
         else:
             if op.exists(name):
                 subprocess.call('rm %s' % path+name, shell=True, executable=self.__sys['shell'])
             ft.writeto(name, self.__data['galaxy'][field])
             subprocess.call('mv %s %s' % (name, path+name), shell=True, executable=self.__sys['shell'])
-            subprocess.Popen('%s -scale mode zscale -zoom 2 %s' % (self.__sys['ds9'], path+name), shell=True, executable=self.__sys['shell'])
+            subprocess.Popen('%s -scale mode zscale -zoom 4 %s' % (self.__sys['ds9'], path+name), shell=True, executable=self.__sys['shell'])
+            self.show_initial_image()
         return
 
     def show_truncate_image(self, crd, radius, crd_mode='pix', path='../tmp/', name='truncate.fits'):
@@ -519,7 +526,7 @@ class Galaxy(object):
 def test():
 
     warnings.filterwarnings('ignore')
-    catalog = pd.read_csv('list.csv')
+    # catalog = pd.read_csv('list.csv')
 
     # # Linux Ubuntu version
     # fits_directory = '/home/franky/Desktop/type1cut/'
@@ -528,19 +535,32 @@ def test():
     # sex = 'sextractor'
 
     # Mac OS version
-    fits_directory = '/Users/franky/Desktop/type1cut/'
+    fits_directory = '/Users/franky/Desktop/type2cut/'
     shell = '/bin/zsh'
     ds9 = '~/bin/ds9'
     sex = '/sw/bin/sex'
 
-    for i in range(5, 6):
-        ctl = catalog.ix[i]
-        name = ctl.NAME1+'_r.fits'
-        ct = [ctl.RA1, ctl.DEC1]
-        gl = Galaxy(fits_directory+name, ct, shell=shell, ds9=ds9, sextractor=sex,
+    # for i in range(5, 6):
+    #     ctl = catalog.ix[i]
+    #     name = ctl.NAME1+'_r.fits'
+    #     ct = [ctl.RA1, ctl.DEC1]
+    #     gl = Galaxy(fits_directory+name, ct, shell=shell, ds9=ds9, sextractor=sex,
+    #                 field={'gini': {'detect': 'sky', 'truncate': '1.5pr'},
+    #                        'background': {'detect': 'sky', 'truncate': '1.5pr'}})
+    #     gl.__eliminate_pollutions__(detect_field='sky', deal_field='2pr')
+    data = pd.read_csv('data.csv')
+    sample = data[(data.PR2 < 10) & (data.PR2 > 1)]
+    sample.index = range(len(sample))
+    print(sample)
+    for i in range(10, 20):
+        name = sample.ix[i].NAME2+'_r.fits'
+        ct = [sample.ix[i].RA2, sample.ix[i].DEC2]
+        gl = Galaxy(fits_directory + name, ct, shell=shell, ds9=ds9, sextractor=sex,
                     field={'gini': {'detect': 'sky', 'truncate': '1.5pr'},
                            'background': {'detect': 'sky', 'truncate': '1.5pr'}})
-        gl.__eliminate_pollutions__(detect_field='sky', deal_field='2pr')
+        gl.show_initial_image()
+        gl.show_eta_curve()
+    # print(len(sample))
 
 
 # @log
