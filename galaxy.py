@@ -10,6 +10,7 @@ import astropy.wcs as wcs
 import warnings
 import json
 import random
+import glob2
 
 
 # log
@@ -189,7 +190,8 @@ class Galaxy(object):
         for y in np.arange(2*ptr+1):
             for x in np.arange(2*ptr+1):
                 moment[y][x] *= (y-gl.y)**2+(x-gl.x)**2
-                if self.__data['segmentation'][field][y][x] == seg:
+                dist = (y-gl.y)**2+(x-gl.x)**2
+                if self.__data['segmentation'][field][y][x] == seg and dist > 25:
                     sf += self.__data['galaxy'][field][y][x]
                     sm += moment[y][x]
         arg = np.argsort(np.copy(self.__data['galaxy'][field]).flatten())[::-1]
@@ -199,16 +201,17 @@ class Galaxy(object):
         for i in range(n):
             y = arg[i] // (2*ptr+1)
             x = arg[i] % (2*ptr+1)
-            if self.__data['segmentation'][field][y][x] == seg:
+            dist = (y - gl.y) ** 2 + (x - gl.x) ** 2
+            if self.__data['segmentation'][field][y][x] == seg and dist > 25:
                 f += self.__data['galaxy'][field][y][x]
                 m += moment[y][x]
                 if f < sf*0.2:
                     self.__data['segmentation'][field][y][x] = -1
                     self.__structural_parameters['moment'] = m/sm
                     self.__flag['cal_m'] = True
-        # if op.exists('tmp.fits'):
-        #     subprocess.call('rm tmp.fits', shell=True, executable=self.__sys['shell'])
-        # ft.writeto('tmp.fits', self.__data['segmentation'][field])
+        if op.exists('tmp.fits'):
+            subprocess.call('rm tmp.fits', shell=True, executable=self.__sys['shell'])
+        ft.writeto('tmp.fits', self.__data['segmentation'][field])
         return self.__structural_parameters['moment']
 
     @property
@@ -225,6 +228,8 @@ class Galaxy(object):
         radius_times = float(cal_field.replace('pr', ''))
         _I = np.copy(self.__data['galaxy'][bg_field][gl.y-ptr*radius_times:gl.y+ptr*radius_times+1,
                                                      gl.x-ptr*radius_times:gl.x+ptr*radius_times+1])
+        ft.writeto(self.__file['tmp'], _I)
+        subprocess.Popen('%s -scale mode zscale -zoom 4 %s' % (self.__sys['ds9'], self.__file['tmp']), shell=True, executable=self.__sys['shell'])
 
         _I180 = np.rot90(_I, 2)
         self.__structural_parameters['asymmetry'] = np.sum(abs(_I-_I180))/np.sum(abs(_I))
@@ -338,7 +343,7 @@ class Galaxy(object):
         except IndexError:
             self.__petrosianRadius = float(np.argmin(eta[:int(min(len(eta), 100))]))
         finally:
-            if self.__petrosianRadius < 20:
+            if self.__petrosianRadius < 15:
                 self.__petrosianRadius = float(np.argmin(eta[:30]))
             self.__flag['get_pr'] = True
         return
@@ -488,7 +493,7 @@ class Galaxy(object):
             ft.writeto(name, self.__data['galaxy'][field])
             subprocess.call('mv %s %s' % (name, path+name), shell=True, executable=self.__sys['shell'])
             subprocess.Popen('%s -scale mode zscale -zoom 4 %s' % (self.__sys['ds9'], path+name), shell=True, executable=self.__sys['shell'])
-            self.show_initial_image()
+            # self.show_initial_image()
         return
 
     def show_truncate_image(self, crd, radius, crd_mode='pix', path='../tmp/', name='truncate.fits'):
@@ -535,10 +540,10 @@ def test():
     # sex = 'sextractor'
 
     # Mac OS version
-    fits_directory = '/Users/franky/Desktop/type2cut/'
+    # fits_directory = '/Users/franky/Desktop/type2cut/'
     shell = '/bin/zsh'
-    ds9 = '~/bin/ds9'
-    sex = '/sw/bin/sex'
+    # ds9 = '~/bin/ds9'
+    # sex = '/sw/bin/sex'
 
     # for i in range(5, 6):
     #     ctl = catalog.ix[i]
@@ -549,18 +554,38 @@ def test():
     #                        'background': {'detect': 'sky', 'truncate': '1.5pr'}})
     #     gl.__eliminate_pollutions__(detect_field='sky', deal_field='2pr')
     data = pd.read_csv('data.csv')
-    sample = data[(data.PR2 < 10) & (data.PR2 > 1)]
+    # fin = open('ff.txt', 'w')
+    # fin.write(str(data[data.M2<0.01]['M2'].values).replace(']','').replace('[',''))
+    sample = data[data.Z1 < 0.05]
+    sample = sample.drop_duplicates('NAME1')
     sample.index = range(len(sample))
-    print(sample)
-    for i in range(10, 20):
-        name = sample.ix[i].NAME2+'_r.fits'
-        ct = [sample.ix[i].RA2, sample.ix[i].DEC2]
-        gl = Galaxy(fits_directory + name, ct, shell=shell, ds9=ds9, sextractor=sex,
-                    field={'gini': {'detect': 'sky', 'truncate': '1.5pr'},
-                           'background': {'detect': 'sky', 'truncate': '1.5pr'}})
-        gl.show_initial_image()
-        gl.show_eta_curve()
+    # print(sample)
+    # sample = data
+    # for i in range(0, 1):
+    #     name = sample.ix[i].NAME2+'_r.fits'
+    #     ct = [sample.ix[i].RA2, sample.ix[i].DEC2]
+    #     gl = Galaxy(fits_directory + name, ct, shell=shell, ds9=ds9, sextractor=sex,
+    #                 field={'gini': {'detect': 'sky', 'truncate': '1.5pr'},
+    #                        'background': {'detect': 'sky', 'truncate': '1.5pr'}})
+    #     print(gl.moment_parameter, sample.ix[i].M2)
+    #     print(gl.asymmetry_parameter)
+        # gl.show_initial_image()
+        # gl.show_eta_curve()
+        # gl.show_galaxy_image(name=name)
     # print(len(sample))
+    # ctl = glob2.glob('/Users/franky/Desktop/type2cut/*_r.fits')
+    # t = 30
+    # for k in range(len(sample)//t):
+    #     objs = ''
+    #     for i in range(k*t, (k+1)*t):
+    #         objs = objs+'/Users/franky/Desktop/type1cut/'+sample.ix[i].NAME1+'_r.fits '
+    #     cmd = '~/bin/ds9'
+    #     view = '-geometry 1920x1080 -view layout vertical -view panner no -view buttons no -view info no -view magnifier no -view colorbar no'
+    #     settings = '-invert -cmap value 1.75 0.275 -zoom 0.5 -minmax -log'
+    #     subprocess.Popen('%s %s %s %s' % (cmd, view, settings, objs), shell=True, executable=shell)
+    for i in range(5):
+        s = '/Users/franky/Desktop/type1cut/type1_'+str(i+1)+'.ps'
+        subprocess.Popen('ps2pdf %s' % s, shell=True, executable=shell)
 
 
 # @log

@@ -22,8 +22,8 @@ catalog.index = range(len(catalog))
 calculated_set1 = {}
 calculated_set2 = {}
 
-fout = open('data.csv', 'w')
-fout.write('NAME1,RA1,DEC1,Z1,PR1,G1,M1,A1,C1,NAME2,RA2,DEC2,Z2,PR2,G2,M2,A2,C2\n')
+fout = open('datax.csv', 'w')
+fout.write('NAME1,RA1,DEC1,Z1,PR1,G1,M1,NAME2,RA2,DEC2,Z2,PR2,G2,M2\n')
 print(catalog)
 for i in range(len(catalog)):
     print(i)
@@ -36,16 +36,16 @@ for i in range(len(catalog)):
                                    'background': {'detect': 'sky', 'truncate': '1.5pr'}})
         catalog.at[i, 'G1'] = gl1.gini_parameter
         catalog.at[i, 'M1'] = gl1.moment_parameter
-        catalog.at[i, 'A1'] = gl1.asymmetry_parameter
-        catalog.at[i, 'C1'] = gl1.concentration_parameter
+        # catalog.at[i, 'A1'] = gl1.asymmetry_parameter
+        # catalog.at[i, 'C1'] = gl1.concentration_parameter
         catalog.at[i, 'PR1'] = gl1.petrosian_radius
         calculated_set1[type1] = i
     else:
         k = calculated_set1[type1]
         catalog.at[i, 'G1'] = catalog.at[k, 'G1']
         catalog.at[i, 'M1'] = catalog.at[k, 'M1']
-        catalog.at[i, 'A1'] = catalog.at[k, 'A1']
-        catalog.at[i, 'C1'] = catalog.at[k, 'C1']
+        # catalog.at[i, 'A1'] = catalog.at[k, 'A1']
+        # catalog.at[i, 'C1'] = catalog.at[k, 'C1']
         catalog.at[i, 'PR1'] = catalog.at[k, 'PR1']
 
     type2 = ctl.NAME2
@@ -56,8 +56,8 @@ for i in range(len(catalog)):
                                    'background': {'detect': 'sky', 'truncate': '1.5pr'}})
         catalog.at[i, 'G2'] = gl2.gini_parameter
         catalog.at[i, 'M2'] = gl2.moment_parameter
-        catalog.at[i, 'A2'] = gl2.asymmetry_parameter
-        catalog.at[i, 'C2'] = gl2.concentration_parameter
+        # catalog.at[i, 'A2'] = gl2.asymmetry_parameter
+        # catalog.at[i, 'C2'] = gl2.concentration_parameter
         catalog.at[i, 'PR2'] = gl2.petrosian_radius
         calculated_set2[type2] = i
 
@@ -65,14 +65,17 @@ for i in range(len(catalog)):
         k = calculated_set2[type2]
         catalog.at[i, 'G2'] = catalog.at[k, 'G2']
         catalog.at[i, 'M2'] = catalog.at[k, 'M2']
-        catalog.at[i, 'A2'] = catalog.at[k, 'A2']
-        catalog.at[i, 'C2'] = catalog.at[k, 'C2']
+        # catalog.at[i, 'A2'] = catalog.at[k, 'A2']
+        # catalog.at[i, 'C2'] = catalog.at[k, 'C2']
         catalog.at[i, 'PR2'] = catalog.at[k, 'PR2']
 
-    tmp = catalog.ix[i].reindex(['NAME1', 'RA1', 'DEC1', 'Z1', 'PR1', 'G1', 'M1', 'A1', 'C1',
-                                 'NAME2', 'RA2', 'DEC2', 'Z2', 'PR2', 'G2', 'M2', 'A2', 'C2']).values
-    for j in range(18):
-        if j < 17:
+    # tmp = catalog.ix[i].reindex(['NAME1', 'RA1', 'DEC1', 'Z1', 'PR1', 'G1', 'M1', 'A1', 'C1',
+    #                              'NAME2', 'RA2', 'DEC2', 'Z2', 'PR2', 'G2', 'M2', 'A2', 'C2']).values
+
+    tmp = catalog.ix[i].reindex(['NAME1', 'RA1', 'DEC1', 'Z1', 'PR1', 'G1', 'M1',
+                                 'NAME2', 'RA2', 'DEC2', 'Z2', 'PR2', 'G2', 'M2']).values
+    for j in range(14):
+        if j < 13:
             fout.write(str(tmp[j])+',')
         else:
             fout.write(str(tmp[j])+'\n')
